@@ -1,11 +1,14 @@
 {
-	"name": "roblox-ts",
+	"name": "@white-dragon-tools/roblox-ts",
 	"version": "3.0.0",
 	"description": "A TypeScript-to-Luau Compiler for Roblox",
 	"main": "out/CLI/index.js",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/roblox-ts/roblox-ts.git"
+		"url": "git+https://github.com/white-dragon-tools/roblox-ts.git"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
 	},
 	"bin": {
 		"rbxtsc": "out/CLI/cli.js"

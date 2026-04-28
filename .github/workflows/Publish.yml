@@ -10,22 +10,26 @@ on:
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/master'
+    if: github.repository == 'white-dragon-tools/roblox-ts' && github.ref == 'refs/heads/alt'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v2.3.4
-        with:
-          token: ${{ secrets.pat }}
 
       - name: Install NPM Dependencies
         uses: bahmutov/npm-install@v1
 
       - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "GitHub Actions"
           git config user.email "noreply@github.com"
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.npm_token }}" > .npmrc
+          echo "@white-dragon-tools:registry=https://npm.pkg.github.com" > .npmrc
+          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
           npm version ${{ inputs.version }}
           npm publish
           git push
