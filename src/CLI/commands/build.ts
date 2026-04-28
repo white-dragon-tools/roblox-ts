@@ -158,6 +158,20 @@ interface WorkspacePackage {
 	dependencies: Array<string>;
 }
 
+interface WorkspaceBuildManifestPackage {
+	artifacts: Record<string, string>;
+	dependencies: Array<string>;
+	path: string;
+}
+
+interface WorkspaceBuildManifest {
+	packages: Record<string, WorkspaceBuildManifestPackage>;
+	version: 1;
+}
+
+const WORKSPACE_BUILD_MANIFEST_NAME = ".rbxtsc-workspace-build.json";
+const WORKSPACE_BUILD_ARTIFACTS = ["flamework.build"];
+
 function getWorkspacePackages(workspaceConfigPath: string) {
 	const workspacePath = path.dirname(workspaceConfigPath);
 	const { excludePackagePatterns, packagePatterns } = parseWorkspacePackagePatterns(workspaceConfigPath);
@@ -202,6 +216,74 @@ function getWorkspacePackages(workspaceConfigPath: string) {
 	}
 
 	return workspacePackages;
+}
+
+function createWorkspaceBuildManifest(workspacePath: string, workspacePackages: Array<WorkspacePackage>) {
+	const manifest: WorkspaceBuildManifest = {
+		packages: {},
+		version: 1,
+	};
+
+	for (const workspacePackage of workspacePackages) {
+		manifest.packages[workspacePackage.name] = {
+			artifacts: {},
+			dependencies: workspacePackage.dependencies,
+			path: path.relative(workspacePath, workspacePackage.path).replace(/\\/g, "/"),
+		};
+	}
+
+	return manifest;
+}
+
+function writeWorkspaceBuildManifest(workspacePath: string, manifest: WorkspaceBuildManifest) {
+	fs.writeJsonSync(path.join(workspacePath, WORKSPACE_BUILD_MANIFEST_NAME), manifest, { spaces: "\t" });
+}
+
+function updateWorkspaceBuildManifestPackage(
+	workspacePath: string,
+	manifest: WorkspaceBuildManifest,
+	workspacePackage: WorkspacePackage,
+) {
+	const manifestPackage = manifest.packages[workspacePackage.name];
+	if (!manifestPackage) return;
+
+	manifestPackage.artifacts = {};
+	for (const artifactName of WORKSPACE_BUILD_ARTIFACTS) {
+		const artifactPath = path.join(workspacePackage.path, artifactName);
+		if (fs.pathExistsSync(artifactPath)) {
+			manifestPackage.artifacts[artifactName] = path.relative(workspacePath, artifactPath).replace(/\\/g, "/");
+		}
+	}
+}
+
+function getWorkspaceBuildArtifacts(
+	workspacePath: string,
+	manifest: WorkspaceBuildManifest,
+	workspacePackage: WorkspacePackage,
+) {
+	const artifactPaths = new Array<string>();
+	const visitedPackageNames = new Set<string>();
+
+	function visit(packageName: string) {
+		if (visitedPackageNames.has(packageName)) return;
+		visitedPackageNames.add(packageName);
+
+		const manifestPackage = manifest.packages[packageName];
+		if (!manifestPackage) return;
+
+		for (const dependencyName of manifestPackage.dependencies) {
+			visit(dependencyName);
+		}
+		for (const artifactPath of Object.values(manifestPackage.artifacts)) {
+			artifactPaths.push(path.join(workspacePath, artifactPath));
+		}
+	}
+
+	for (const dependencyName of workspacePackage.dependencies) {
+		visit(dependencyName);
+	}
+
+	return artifactPaths;
 }
 
 function orderWorkspacePackages(workspacePackages: Array<WorkspacePackage>) {
@@ -293,6 +375,8 @@ function flushAsyncTransformerArtifacts() {
 }
 
 async function buildWorkspacePackages(
+	workspacePath: string,
+	manifest: WorkspaceBuildManifest,
 	workspacePackages: Array<WorkspacePackage>,
 	argv: BuildFlags & Partial<ProjectOptions>,
 	diagnosticReporter: ts.DiagnosticReporter,
@@ -301,22 +385,27 @@ async function buildWorkspacePackages(
 	for (const workspacePackage of workspacePackages) {
 		LogService.writeLineIfVerbose(`Building ${workspacePackage.name}`);
 		const projectOptions = createProjectOptions(workspacePackage.tsConfigPath, argv);
+		projectOptions.workspaceBuildArtifacts = getWorkspaceBuildArtifacts(workspacePath, manifest, workspacePackage);
 		if (!buildProject(workspacePackage.tsConfigPath, projectOptions, diagnosticReporter, workspacePackage.path)) {
 			process.exitCode = 1;
 			success = false;
 			break;
 		}
 		await flushAsyncTransformerArtifacts();
+		updateWorkspaceBuildManifestPackage(workspacePath, manifest, workspacePackage);
+		writeWorkspaceBuildManifest(workspacePath, manifest);
 	}
 	return success;
 }
 
 async function watchWorkspacePackages(
+	workspacePath: string,
+	manifest: WorkspaceBuildManifest,
 	workspacePackages: Array<WorkspacePackage>,
 	argv: BuildFlags & Partial<ProjectOptions>,
 	diagnosticReporter: ts.DiagnosticReporter,
 ) {
-	if (!(await buildWorkspacePackages(workspacePackages, argv, diagnosticReporter))) return;
+	if (!(await buildWorkspacePackages(workspacePath, manifest, workspacePackages, argv, diagnosticReporter))) return;
 
 	const changedPackageNames = new Set<string>();
 	let timeout: NodeJS.Timeout | undefined;
@@ -341,7 +430,7 @@ async function watchWorkspacePackages(
 			LogService.writeLine(
 				`Workspace change detected. Rebuilding ${affectedPackages.map(v => v.name).join(", ")}...`,
 			);
-			await buildWorkspacePackages(affectedPackages, argv, diagnosticReporter);
+			await buildWorkspacePackages(workspacePath, manifest, affectedPackages, argv, diagnosticReporter);
 		}, 100);
 	}
 
@@ -453,11 +542,14 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 
 			if (argv.workspace) {
 				const workspaceConfigPath = findWorkspaceConfigPath(projectPath);
+				const workspacePath = path.dirname(workspaceConfigPath);
 				const workspacePackages = orderWorkspacePackages(getWorkspacePackages(workspaceConfigPath));
+				const manifest = createWorkspaceBuildManifest(workspacePath, workspacePackages);
+				writeWorkspaceBuildManifest(workspacePath, manifest);
 				if (argv.watch) {
-					await watchWorkspacePackages(workspacePackages, argv, diagnosticReporter);
+					await watchWorkspacePackages(workspacePath, manifest, workspacePackages, argv, diagnosticReporter);
 				} else {
-					await buildWorkspacePackages(workspacePackages, argv, diagnosticReporter);
+					await buildWorkspacePackages(workspacePath, manifest, workspacePackages, argv, diagnosticReporter);
 				}
 			} else {
 				const tsConfigPath = findTsConfigPath(projectPath);

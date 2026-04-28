@@ -38,6 +38,16 @@ type PluginFactory =
 	| TypeCheckerPattern
 	| RawPattern;
 
+interface FlameworkBuildInfoCacheEntry {
+	buildInfo: unknown;
+	mtimeMs: number;
+	size: number;
+}
+
+const flameworkBuildInfoCache = new Map<string, FlameworkBuildInfoCacheEntry>();
+const flameworkWorkspaceArtifactPathsByPackageRoot = new Map<string, Set<string>>();
+const patchedFlameworkPackageRoots = new Set<string>();
+
 function findPackageRoot(modulePath: string) {
 	let currentPath = path.dirname(modulePath);
 	while (currentPath !== path.dirname(currentPath)) {
@@ -48,18 +58,91 @@ function findPackageRoot(modulePath: string) {
 	}
 }
 
-function clearTransformerRequireCache(modulePath: string) {
+function patchFlameworkBuildInfoCache(packageRoot: string, workspaceBuildArtifacts: Array<string>) {
+	if (workspaceBuildArtifacts.length === 0) return;
+
+	const workspaceArtifactPaths = new Set(
+		workspaceBuildArtifacts
+			.filter(
+				artifactPath => path.basename(artifactPath) === "flamework.build" && fs.pathExistsSync(artifactPath),
+			)
+			.map(artifactPath => fs.realpathSync(artifactPath)),
+	);
+	if (workspaceArtifactPaths.size === 0) return;
+	flameworkWorkspaceArtifactPathsByPackageRoot.set(packageRoot, workspaceArtifactPaths);
+	if (patchedFlameworkPackageRoots.has(packageRoot)) return;
+
+	// eslint-disable-next-line @typescript-eslint/no-require-imports -- patch Flamework's package-local BuildInfo reader
+	const { BuildInfo } = require(path.join(packageRoot, "out/classes/buildInfo.js")) as {
+		BuildInfo: {
+			fromPath(fileName: string): unknown;
+		};
+	};
+
+	const originalFromPath = BuildInfo.fromPath.bind(BuildInfo);
+	BuildInfo.fromPath = (fileName: string) => {
+		if (!fs.pathExistsSync(fileName)) {
+			return originalFromPath(fileName);
+		}
+
+		const realPath = fs.realpathSync(fileName);
+		if (!flameworkWorkspaceArtifactPathsByPackageRoot.get(packageRoot)?.has(realPath)) {
+			return originalFromPath(fileName);
+		}
+
+		const stat = fs.statSync(realPath);
+		const cacheEntry = flameworkBuildInfoCache.get(realPath);
+		if (cacheEntry && cacheEntry.mtimeMs === stat.mtimeMs && cacheEntry.size === stat.size) {
+			return cacheEntry.buildInfo;
+		}
+
+		const buildInfo = originalFromPath(fileName);
+		flameworkBuildInfoCache.set(realPath, {
+			buildInfo,
+			mtimeMs: stat.mtimeMs,
+			size: stat.size,
+		});
+		return buildInfo;
+	};
+	patchedFlameworkPackageRoots.add(packageRoot);
+}
+
+function seedFlameworkBuildInfoCandidates(modulePath: string, workspaceBuildArtifacts: Array<string>) {
+	if (workspaceBuildArtifacts.length === 0) return;
+
 	const packageRoot = findPackageRoot(modulePath);
 	if (!packageRoot) return;
+	patchFlameworkBuildInfoCache(packageRoot, workspaceBuildArtifacts);
 
-	const normalizedPackageRoot = path.normalize(fs.realpathSync(packageRoot));
-	for (const cachePath of Object.keys(require.cache)) {
-		const normalizedCachePath = path.normalize(cachePath);
-		if (
-			normalizedCachePath === normalizedPackageRoot ||
-			normalizedCachePath.startsWith(normalizedPackageRoot + path.sep)
-		) {
-			delete require.cache[cachePath];
+	// eslint-disable-next-line @typescript-eslint/no-require-imports -- seed Flamework's package-local cache
+	const { Cache } = require(path.join(packageRoot, "out/util/cache.js")) as {
+		Cache: {
+			buildInfoCandidates?: Array<string>;
+			moduleResolution?: Map<string, unknown>;
+			pkgJsonCache?: Map<string, unknown>;
+			realPath?: Map<string, string>;
+			shouldView?: Map<string, boolean>;
+		};
+	};
+
+	const candidates = new Array<string>();
+	for (const artifactPath of workspaceBuildArtifacts) {
+		if (path.basename(artifactPath) === "flamework.build" && fs.pathExistsSync(artifactPath)) {
+			candidates.push(artifactPath);
+		}
+	}
+
+	if (candidates.length > 0) {
+		const nextCandidates = [...new Set(candidates.map(v => fs.realpathSync(v)))];
+		const currentCandidates = Cache.buildInfoCandidates;
+		const candidatesChanged =
+			currentCandidates === undefined ||
+			currentCandidates.length !== nextCandidates.length ||
+			currentCandidates.some((candidate, index) => candidate !== nextCandidates[index]);
+
+		if (candidatesChanged) {
+			Cache.buildInfoCandidates = nextCandidates;
+			Cache.shouldView?.clear();
 		}
 	}
 }
@@ -115,6 +198,7 @@ export function createTransformerList(
 	program: ts.Program,
 	configs: Array<TransformerPluginConfig>,
 	baseDir: string,
+	workspaceBuildArtifacts: Array<string> = [],
 ): ts.CustomTransformers {
 	const transforms: ts.CustomTransformers = {
 		before: [],
@@ -126,10 +210,12 @@ export function createTransformerList(
 
 		try {
 			const modulePath = resolve.sync(config.transform, { basedir: baseDir });
-			clearTransformerRequireCache(modulePath);
 
 			// eslint-disable-next-line @typescript-eslint/no-require-imports -- need to require the transformer
 			const commonjsModule: PluginFactory | { [key: string]: PluginFactory } = require(modulePath);
+			if (config.transform === "rbxts-transformer-flamework") {
+				seedFlameworkBuildInfoCandidates(modulePath, workspaceBuildArtifacts);
+			}
 
 			const factoryModule = typeof commonjsModule === "function" ? { default: commonjsModule } : commonjsModule;
 			const factory = factoryModule[config.import ?? "default"];

@@ -111,7 +111,12 @@ export function compileFiles(
 	if (compilerOptions.plugins && compilerOptions.plugins.length > 0) {
 		benchmarkIfVerbose(`running transformers..`, () => {
 			const pluginConfigs = getPluginConfigs(data.tsConfigPath);
-			const transformerList = createTransformerList(program, pluginConfigs, data.projectPath);
+			const transformerList = createTransformerList(
+				program,
+				pluginConfigs,
+				data.projectPath,
+				data.projectOptions.workspaceBuildArtifacts,
+			);
 			const transformers = flattenIntoTransformers(transformerList);
 			if (transformers.length > 0) {
 				const { service, updateFile } = (data.transformerWatcher ??= createTransformerWatcher(program));

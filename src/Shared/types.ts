@@ -10,6 +10,7 @@ export interface ProjectOptions {
 	usePolling: boolean;
 	verbose: boolean;
 	watch: boolean;
+	workspaceBuildArtifacts?: Array<string>;
 	writeOnlyChanged: boolean;
 	writeTransformedFiles: boolean;
 	optimizedLoops: boolean;
