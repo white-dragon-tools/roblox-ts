@@ -1,6 +1,7 @@
 name: Test create-roblox-ts
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
