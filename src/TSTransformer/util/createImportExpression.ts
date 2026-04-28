@@ -47,15 +47,26 @@ function getRelativeImport(sourceRbxPath: RbxPath, moduleRbxPath: RbxPath) {
 }
 
 function validateModule(state: TransformState, scope: string) {
-	const scopedModules = path.join(state.data.nodeModulesPath, scope);
+	const scopedModulesPaths = state.data.nodeModulesPaths.map(nodeModulesPath => path.join(nodeModulesPath, scope));
 	if (state.compilerOptions.typeRoots) {
 		for (const typeRoot of state.compilerOptions.typeRoots) {
-			if (path.normalize(scopedModules) === path.normalize(typeRoot)) {
+			if (scopedModulesPaths.some(scopedModules => path.normalize(scopedModules) === path.normalize(typeRoot))) {
 				return true;
 			}
 		}
 	}
 	return false;
+}
+
+function getNodeModulesPath(state: TransformState, moduleOutPath: string) {
+	const normalizedModuleOutPath = path.normalize(moduleOutPath);
+	return state.data.nodeModulesPaths
+		.slice()
+		.sort((a, b) => b.length - a.length)
+		.find(nodeModulesPath => {
+			const relativePath = path.relative(path.normalize(nodeModulesPath), normalizedModuleOutPath);
+			return relativePath !== "" && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+		});
 }
 
 function findRelativeRbxPath(moduleOutPath: string, pkgRojoResolvers: Array<RojoResolver>) {
@@ -73,7 +84,15 @@ function getNodeModulesImportParts(
 	moduleSpecifier: ts.Expression,
 	moduleOutPath: string,
 ) {
-	const moduleScope = path.relative(state.data.nodeModulesPath, moduleOutPath).split(path.sep)[0];
+	const nodeModulesPath = getNodeModulesPath(state, moduleOutPath);
+	if (!nodeModulesPath) {
+		DiagnosticService.addDiagnostic(
+			errors.noRojoData(moduleSpecifier, path.relative(state.data.projectPath, moduleOutPath), true),
+		);
+		return [luau.none()];
+	}
+
+	const moduleScope = path.relative(nodeModulesPath, moduleOutPath).split(path.sep)[0];
 	assert(moduleScope);
 
 	if (!moduleScope.startsWith("@")) {

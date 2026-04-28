@@ -201,11 +201,13 @@ export function isEmptyStringType(type: ts.Type) {
 }
 
 export function isRobloxType(state: TransformState): TypeCheck {
-	const typesPath = path.join(state.data.nodeModulesPath, RBXTS_SCOPE, "types");
+	const typesPaths = state.data.nodeModulesPaths.map(nodeModulesPath =>
+		path.join(nodeModulesPath, RBXTS_SCOPE, "types"),
+	);
 	return type =>
 		type.symbol?.declarations?.some(d => {
 			const filePath = d.getSourceFile()?.fileName;
-			return filePath !== undefined && isPathDescendantOf(filePath, typesPath);
+			return filePath !== undefined && typesPaths.some(typesPath => isPathDescendantOf(filePath, typesPath));
 		}) ?? false;
 }
 

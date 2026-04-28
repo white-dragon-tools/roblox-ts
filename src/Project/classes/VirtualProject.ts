@@ -40,6 +40,7 @@ export class VirtualProject {
 		this.data = {
 			isPackage: false,
 			nodeModulesPath: NODE_MODULES_PATH,
+			nodeModulesPaths: [NODE_MODULES_PATH],
 			projectOptions: Object.assign({}, DEFAULT_PROJECT_OPTIONS, {
 				rojo: "",
 				type: ProjectType.Model,

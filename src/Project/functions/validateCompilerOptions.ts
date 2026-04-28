@@ -20,17 +20,59 @@ function y(str: string) {
 	return kleur.yellow(str);
 }
 
-function validateTypeRoots(nodeModulesPath: string, typeRoots: Array<string>) {
-	const typesPath = path.resolve(nodeModulesPath);
+function addUniquePath(paths: Array<string>, fsPath: string) {
+	const normalizedPath = path.normalize(fsPath);
+	if (!paths.some(v => path.normalize(v) === normalizedPath)) {
+		paths.push(normalizedPath);
+	}
+}
+
+function validateTypeRoots(nodeModulesPaths: Array<string>, typeRoots: Array<string>) {
+	const typesPaths = nodeModulesPaths.map(nodeModulesPath => path.resolve(nodeModulesPath, RBXTS_SCOPE));
 	for (const typeRoot of typeRoots) {
-		if (path.resolve(typeRoot) === typesPath) {
+		if (typesPaths.some(typesPath => path.resolve(typeRoot) === typesPath)) {
 			return true;
 		}
 	}
 	return false;
 }
 
-export function validateCompilerOptions(opts: ts.CompilerOptions, projectPath: string) {
+function expandTypeRoots(opts: ts.CompilerOptions, projectPath: string, nodeModulesPaths: Array<string>) {
+	const expandedTypeRoots = new Array<string>();
+	for (const typeRoot of opts.typeRoots ?? []) {
+		const resolvedTypeRoot = path.resolve(projectPath, typeRoot);
+		addUniquePath(expandedTypeRoots, resolvedTypeRoot);
+
+		const relativeToProjectNodeModules = path.relative(nodeModulesPaths[0], resolvedTypeRoot);
+		if (!relativeToProjectNodeModules.startsWith("..") && relativeToProjectNodeModules !== "") {
+			for (const nodeModulesPath of nodeModulesPaths.slice(1)) {
+				const candidateTypeRoot = path.join(nodeModulesPath, relativeToProjectNodeModules);
+				if (fs.existsSync(candidateTypeRoot)) {
+					addUniquePath(expandedTypeRoots, candidateTypeRoot);
+				}
+			}
+		}
+	}
+
+	if (expandedTypeRoots.length === 0) {
+		for (const nodeModulesPath of nodeModulesPaths) {
+			const rbxtsScopePath = path.join(nodeModulesPath, RBXTS_SCOPE);
+			if (fs.existsSync(rbxtsScopePath)) {
+				addUniquePath(expandedTypeRoots, rbxtsScopePath);
+				break;
+			}
+		}
+	}
+
+	opts.typeRoots = expandedTypeRoots;
+	return expandedTypeRoots;
+}
+
+export function validateCompilerOptions(
+	opts: ts.CompilerOptions,
+	projectPath: string,
+	nodeModulesPaths = [path.join(projectPath, NODE_MODULES)],
+) {
 	const errors = new Array<string>();
 
 	// required compiler options
@@ -62,17 +104,16 @@ export function validateCompilerOptions(opts: ts.CompilerOptions, projectPath: s
 		errors.push(`${y(`"allowSyntheticDefaultImports"`)} must be ${y(`true`)}`);
 	}
 
-	const rbxtsModules = path.join(projectPath, NODE_MODULES, RBXTS_SCOPE);
-	if (opts.typeRoots === undefined || !validateTypeRoots(rbxtsModules, opts.typeRoots)) {
-		errors.push(`${y(`"typeRoots"`)} must contain ${y(rbxtsModules)}`);
+	const typeRoots = expandTypeRoots(opts, projectPath, nodeModulesPaths);
+	const rbxtsModules = nodeModulesPaths.map(nodeModulesPath => path.join(nodeModulesPath, RBXTS_SCOPE));
+	if (!validateTypeRoots(nodeModulesPaths, typeRoots)) {
+		errors.push(`${y(`"typeRoots"`)} must contain one of: ${rbxtsModules.map(y).join(", ")}`);
 	}
 
 	for (const typesLocation of opts.types ?? []) {
 		// Technically checked to exist above
 		// But if that's an error, we still want this error too,
 		// To avoid "fix one error, get a new one on the next compile"
-		const typeRoots = opts.typeRoots ?? ["node_modules/@rbxts"];
-
 		if (
 			!typeRoots.some(typeRoot => {
 				const typesPath = path.resolve(projectPath, typeRoot, typesLocation);

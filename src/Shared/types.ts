@@ -20,6 +20,7 @@ export interface ProjectOptions {
 export interface ProjectData {
 	isPackage: boolean;
 	nodeModulesPath: string;
+	nodeModulesPaths: Array<string>;
 	projectOptions: ProjectOptions;
 	projectPath: string;
 	rojoConfigPath: string | undefined;

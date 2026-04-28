@@ -210,6 +210,10 @@ export const errors = {
 	noRojoData: errorWithContext((path: string, isPackage: boolean) => [
 		`Could not find Rojo data. There is no $path in your Rojo config that covers ${path}`,
 		isPackage && suggestion(`Did you forget to add a custom npm scope to your default.project.json?`),
+		isPackage &&
+			suggestion(
+				`If this package is resolved through a workspace node_modules, make sure default.project.json maps the npm scope to that same node_modules location.`,
+			),
 	]),
 	noPackageImportWithoutScope: errorWithContext((path: string, rbxPath: RbxPath) => [
 		`Imported package Roblox path is missing an npm scope!`,

@@ -9,6 +9,27 @@ import ts from "typescript";
 
 const PACKAGE_REGEX = /^@[a-z0-9-]*\//;
 
+function addUniquePath(paths: Array<string>, fsPath: string) {
+	const normalizedPath = path.normalize(fsPath);
+	if (!paths.some(v => path.normalize(v) === normalizedPath)) {
+		paths.push(normalizedPath);
+	}
+}
+
+function getNodeModulesPaths(packagePath: string) {
+	const nodeModulesPaths = new Array<string>();
+	for (let currentPath = packagePath; ; currentPath = path.dirname(currentPath)) {
+		const nodeModulesPath = path.join(currentPath, NODE_MODULES);
+		if (currentPath === packagePath || fs.pathExistsSync(nodeModulesPath)) {
+			addUniquePath(nodeModulesPaths, nodeModulesPath);
+		}
+
+		const parentPath = path.dirname(currentPath);
+		if (parentPath === currentPath) break;
+	}
+	return nodeModulesPaths;
+}
+
 export function createProjectData(tsConfigPath: string, projectOptions: ProjectOptions): ProjectData {
 	const projectPath = path.dirname(tsConfigPath);
 
@@ -29,6 +50,7 @@ export function createProjectData(tsConfigPath: string, projectOptions: ProjectO
 	projectOptions.includePath = path.resolve(projectOptions.includePath || path.join(projectPath, "include"));
 
 	const nodeModulesPath = path.join(path.dirname(pkgJsonPath), NODE_MODULES);
+	const nodeModulesPaths = getNodeModulesPaths(path.dirname(pkgJsonPath));
 
 	let rojoConfigPath: string | undefined;
 	// Checking truthiness covers empty string case
@@ -46,6 +68,7 @@ export function createProjectData(tsConfigPath: string, projectOptions: ProjectO
 		tsConfigPath,
 		isPackage,
 		nodeModulesPath,
+		nodeModulesPaths,
 		projectOptions,
 		projectPath,
 		rojoConfigPath,

@@ -1,3 +1,5 @@
+import fs from "fs-extra";
+import path from "path";
 import resolve from "resolve";
 import { warnings } from "Shared/diagnostics";
 import { TransformerPluginConfig } from "Shared/types";
@@ -35,6 +37,32 @@ type PluginFactory =
 	| CompilerOptionsPattern
 	| TypeCheckerPattern
 	| RawPattern;
+
+function findPackageRoot(modulePath: string) {
+	let currentPath = path.dirname(modulePath);
+	while (currentPath !== path.dirname(currentPath)) {
+		if (ts.sys.fileExists(path.join(currentPath, "package.json"))) {
+			return currentPath;
+		}
+		currentPath = path.dirname(currentPath);
+	}
+}
+
+function clearTransformerRequireCache(modulePath: string) {
+	const packageRoot = findPackageRoot(modulePath);
+	if (!packageRoot) return;
+
+	const normalizedPackageRoot = path.normalize(fs.realpathSync(packageRoot));
+	for (const cachePath of Object.keys(require.cache)) {
+		const normalizedCachePath = path.normalize(cachePath);
+		if (
+			normalizedCachePath === normalizedPackageRoot ||
+			normalizedCachePath.startsWith(normalizedPackageRoot + path.sep)
+		) {
+			delete require.cache[cachePath];
+		}
+	}
+}
 
 function getTransformerFromFactory(factory: PluginFactory, config: TransformerPluginConfig, program: ts.Program) {
 	const { after, afterDeclarations, type, ...manualConfig } = config;
@@ -98,6 +126,7 @@ export function createTransformerList(
 
 		try {
 			const modulePath = resolve.sync(config.transform, { basedir: baseDir });
+			clearTransformerRequireCache(modulePath);
 
 			// eslint-disable-next-line @typescript-eslint/no-require-imports -- need to require the transformer
 			const commonjsModule: PluginFactory | { [key: string]: PluginFactory } = require(modulePath);

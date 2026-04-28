@@ -19,6 +19,7 @@ import { assert } from "Shared/util/assert";
 import { benchmarkIfVerbose } from "Shared/util/benchmark";
 import { createTextDiagnostic } from "Shared/util/createTextDiagnostic";
 import { getRootDirs } from "Shared/util/getRootDirs";
+import { isPathDescendantOf } from "Shared/util/isPathDescendantOf";
 import { MultiTransformState, transformSourceFile, TransformState } from "TSTransformer";
 import { DiagnosticService } from "TSTransformer/classes/DiagnosticService";
 import { createTransformServices } from "TSTransformer/util/createTransformServices";
@@ -69,7 +70,8 @@ export function compileFiles(
 	checkRojoConfig(data, rojoResolver, getRootDirs(compilerOptions), pathTranslator);
 
 	for (const sourceFile of program.getSourceFiles()) {
-		if (!path.normalize(sourceFile.fileName).startsWith(data.nodeModulesPath)) {
+		const normalizedFileName = path.normalize(sourceFile.fileName);
+		if (!data.nodeModulesPaths.some(nodeModulesPath => isPathDescendantOf(normalizedFileName, nodeModulesPath))) {
 			checkFileName(sourceFile.fileName);
 		}
 	}

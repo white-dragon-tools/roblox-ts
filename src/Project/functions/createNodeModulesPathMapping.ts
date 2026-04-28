@@ -5,6 +5,9 @@ import { realPathExistsSync } from "Shared/util/realPathExistsSync";
 
 export function createNodeModulesPathMapping(typeRoots: Array<string>) {
 	const nodeModulesPathMapping = new Map<string, string>();
+	const setPathMapping = (typesPath: string, mainPath: string) => {
+		nodeModulesPathMapping.set(getCanonicalFileName(path.resolve(typesPath)), path.resolve(mainPath));
+	};
 	// go through each org
 	for (const scopePath of typeRoots) {
 		if (fs.pathExistsSync(scopePath)) {
@@ -21,10 +24,10 @@ export function createNodeModulesPathMapping(typeRoots: Array<string>) {
 					// both "types" and "typings" are valid
 					const typesPath = pkgJson.types ?? pkgJson.typings ?? "index.d.ts";
 					if (pkgJson.main) {
-						nodeModulesPathMapping.set(
-							getCanonicalFileName(path.resolve(pkgPath, typesPath)),
-							path.resolve(pkgPath, pkgJson.main),
-						);
+						setPathMapping(path.join(pkgPath, typesPath), path.join(pkgPath, pkgJson.main));
+
+						const realPkgPath = path.dirname(pkgJsonPath);
+						setPathMapping(path.join(realPkgPath, typesPath), path.join(pkgPath, pkgJson.main));
 					}
 				}
 			}
