@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - master
+      - alt
 
 jobs:
   unit-tests:
@@ -34,7 +34,10 @@ jobs:
           path: tests/out
 
       - name: Upload coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
