@@ -6,7 +6,10 @@ import { cleanup } from "Project/functions/cleanup";
 import { compileFiles } from "Project/functions/compileFiles";
 import { copyFiles } from "Project/functions/copyFiles";
 import { copyInclude } from "Project/functions/copyInclude";
-import { buildWorkspaceWithSolutionBuilder } from "Project/functions/buildWorkspaceWithSolutionBuilder";
+import {
+	buildWorkspaceWithSolutionBuilder,
+	watchWorkspaceWithSolutionBuilder,
+} from "Project/functions/buildWorkspaceWithSolutionBuilder";
 import { createPathTranslator } from "Project/functions/createPathTranslator";
 import { createProjectData } from "Project/functions/createProjectData";
 import { createProjectProgram } from "Project/functions/createProjectProgram";
@@ -567,7 +570,9 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 							.map(depName => tsConfigByName.get(depName))
 							.filter((value): value is string => value !== undefined),
 					}));
-					if (!buildWorkspaceWithSolutionBuilder(members, argv, diagnosticReporter)) {
+					if (argv.watch) {
+						watchWorkspaceWithSolutionBuilder(members, argv, diagnosticReporter);
+					} else if (!buildWorkspaceWithSolutionBuilder(members, argv, diagnosticReporter)) {
 						process.exitCode = 1;
 					}
 				} else {

@@ -2,10 +2,6 @@
 // Hidden behind --useSolutionBuilder. The non-experimental code path remains
 // the in-tree pnpm-workspace parser + topo + manifest in src/CLI/commands/build.ts.
 //
-// Experimental workspace driver backed by ts.createSolutionBuilder.
-// Hidden behind --useSolutionBuilder. The non-experimental code path remains
-// the in-tree pnpm-workspace parser + topo + manifest in src/CLI/commands/build.ts.
-//
 // Open spike items (intentionally not addressed yet):
 // - Double .d.ts emit: TS's pre-hook emit writes .d.ts; compileFiles re-emits via
 //   transformPaths/transformTypeReferenceDirectives. Wasteful but correct.
@@ -92,11 +88,17 @@ function readTsConfigProjectOptions(tsConfigPath: string): Partial<ProjectOption
 	return config?.rbxts ?? config?.rbxtsc;
 }
 
-export function buildWorkspaceWithSolutionBuilder(
+/**
+ * Hooks shared by both --useSolutionBuilder and --useSolutionBuilder --watch.
+ * Mutates `host` in place. Returns a getter so the caller can read `success` after build.
+ */
+function configureSolutionBuilderHost(
+	host: ts.SolutionBuilderHostBase<ts.EmitAndSemanticDiagnosticsBuilderProgram>,
 	workspaceMembers: Array<WorkspaceMember>,
 	cliOptions: Partial<ProjectOptions>,
 	diagnosticReporter: ts.DiagnosticReporter,
-): boolean {
+	changedHintsByProgram: WeakMap<ts.BuilderProgram, Array<string>>,
+): { isSuccessful: () => boolean } {
 	const cliOptionEntries = Object.entries(cliOptions).filter(([, value]) => value !== undefined);
 
 	const memberByConfigPath = new Map<string, WorkspaceMember>();
@@ -104,8 +106,6 @@ export function buildWorkspaceWithSolutionBuilder(
 		memberByConfigPath.set(path.normalize(member.tsConfigPath), member);
 	}
 
-	// Shared cache between host.getParsedCommandLine and collectWorkspaceBuildArtifacts so dependency
-	// tsconfigs are parsed exactly once per build pass.
 	const parsedCommandLineCache = new Map<string, ts.ParsedCommandLine | undefined>();
 	const parseConfig = (configPath: string): ts.ParsedCommandLine | undefined => {
 		if (parsedCommandLineCache.has(configPath)) {
@@ -123,41 +123,6 @@ export function buildWorkspaceWithSolutionBuilder(
 		return parsed;
 	};
 
-	// Captured before TS's emit consumes BuilderProgram.changedFilesSet, so afterProgramEmitAndDiagnostics
-	// can drive incremental Luau emit through getChangedSourceFiles(program, pathHints).
-	const changedHintsByProgram = new WeakMap<ts.BuilderProgram, Array<string>>();
-
-	const createProgram: ts.CreateProgram<ts.EmitAndSemanticDiagnosticsBuilderProgram> = (
-		rootNames,
-		options,
-		host,
-		oldProgram,
-		configFileParsingDiagnostics,
-		projectReferences,
-	) => {
-		const builderProgram = ts.createEmitAndSemanticDiagnosticsBuilderProgram(
-			rootNames,
-			options,
-			host,
-			oldProgram,
-			configFileParsingDiagnostics,
-			projectReferences,
-		);
-		const hints = new Array<string>();
-		(builderProgram.getState() as { changedFilesSet?: ReadonlyMap<string, true> }).changedFilesSet?.forEach(
-			(_, fileName) => hints.push(fileName),
-		);
-		changedHintsByProgram.set(builderProgram, hints);
-		return builderProgram;
-	};
-
-	const host = ts.createSolutionBuilderHost(
-		ts.sys,
-		createProgram,
-		diagnosticReporter,
-		ts.createBuilderStatusReporter(ts.sys, true),
-	);
-
 	const originalWriteFile = host.writeFile!;
 	host.writeFile = (fileName: string, contents: string, writeBOM?: boolean) => {
 		if (fileName.endsWith(".js") || fileName.endsWith(".js.map")) return;
@@ -170,9 +135,6 @@ export function buildWorkspaceWithSolutionBuilder(
 
 		const member = memberByConfigPath.get(path.normalize(fileName));
 		if (member !== undefined) {
-			// SolutionBuilder requires composite (and therefore declaration). Skip lib check matches the
-			// per-file diagnostic semantics of the legacy --workspace path, which silently ignores type
-			// errors in node_modules .d.ts files.
 			parsed.options.composite = true;
 			parsed.options.declaration = true;
 			if (parsed.options.skipLibCheck === undefined) {
@@ -239,9 +201,76 @@ export function buildWorkspaceWithSolutionBuilder(
 		}
 	};
 
-	const builder = ts.createSolutionBuilder(host, workspaceMembers.map(member => member.tsConfigPath), {
-		verbose: cliOptions.verbose === true,
-	});
+	return { isSuccessful: () => success };
+}
+
+function createSnapshottingProgramFactory(
+	changedHintsByProgram: WeakMap<ts.BuilderProgram, Array<string>>,
+): ts.CreateProgram<ts.EmitAndSemanticDiagnosticsBuilderProgram> {
+	return (rootNames, options, host, oldProgram, configFileParsingDiagnostics, projectReferences) => {
+		const builderProgram = ts.createEmitAndSemanticDiagnosticsBuilderProgram(
+			rootNames,
+			options,
+			host,
+			oldProgram,
+			configFileParsingDiagnostics,
+			projectReferences,
+		);
+		const hints = new Array<string>();
+		(builderProgram.getState() as { changedFilesSet?: ReadonlyMap<string, true> }).changedFilesSet?.forEach(
+			(_, fileName) => hints.push(fileName),
+		);
+		changedHintsByProgram.set(builderProgram, hints);
+		return builderProgram;
+	};
+}
+
+export function buildWorkspaceWithSolutionBuilder(
+	workspaceMembers: Array<WorkspaceMember>,
+	cliOptions: Partial<ProjectOptions>,
+	diagnosticReporter: ts.DiagnosticReporter,
+): boolean {
+	const changedHintsByProgram = new WeakMap<ts.BuilderProgram, Array<string>>();
+	const host = ts.createSolutionBuilderHost(
+		ts.sys,
+		createSnapshottingProgramFactory(changedHintsByProgram),
+		diagnosticReporter,
+		ts.createBuilderStatusReporter(ts.sys, true),
+	);
+	const { isSuccessful } = configureSolutionBuilderHost(
+		host,
+		workspaceMembers,
+		cliOptions,
+		diagnosticReporter,
+		changedHintsByProgram,
+	);
+	const builder = ts.createSolutionBuilder(
+		host,
+		workspaceMembers.map(member => member.tsConfigPath),
+		{ verbose: cliOptions.verbose === true },
+	);
 	const exitStatus = builder.build();
-	return success && exitStatus === ts.ExitStatus.Success;
+	return isSuccessful() && exitStatus === ts.ExitStatus.Success;
+}
+
+export function watchWorkspaceWithSolutionBuilder(
+	workspaceMembers: Array<WorkspaceMember>,
+	cliOptions: Partial<ProjectOptions>,
+	diagnosticReporter: ts.DiagnosticReporter,
+): void {
+	const changedHintsByProgram = new WeakMap<ts.BuilderProgram, Array<string>>();
+	const host = ts.createSolutionBuilderWithWatchHost(
+		ts.sys,
+		createSnapshottingProgramFactory(changedHintsByProgram),
+		diagnosticReporter,
+		ts.createBuilderStatusReporter(ts.sys, true),
+		ts.createWatchStatusReporter(ts.sys, true),
+	);
+	configureSolutionBuilderHost(host, workspaceMembers, cliOptions, diagnosticReporter, changedHintsByProgram);
+	const builder = ts.createSolutionBuilderWithWatch(
+		host,
+		workspaceMembers.map(member => member.tsConfigPath),
+		{ verbose: cliOptions.verbose === true, watch: true },
+	);
+	builder.build();
 }
