@@ -2,6 +2,7 @@
 
 import { execFileSync } from "child_process";
 import fs from "fs-extra";
+import os from "os";
 import path from "path";
 import { compileFiles } from "Project/functions/compileFiles";
 import { copyFiles } from "Project/functions/copyFiles";
@@ -83,11 +84,21 @@ describe("should compile tests project", () => {
 describe("should build tests-monorepo with both workspace drivers", () => {
 	const fixtureRoot = path.join(PACKAGE_ROOT, "tests-monorepo");
 	const cliPath = path.join(PACKAGE_ROOT, "out", "CLI", "cli.js");
+	const lunePath = resolveToolPath("lune");
+	const rojoPath = resolveToolPath("rojo");
 	const leafOutDir = path.join(fixtureRoot, "packages", "leaf", "out");
 	const appOutDir = path.join(fixtureRoot, "packages", "app", "out");
 
 	function ensureSymlink(target: string, linkPath: string) {
 		if (!fs.existsSync(linkPath)) fs.symlinkSync(target, linkPath);
+	}
+
+	function resolveToolPath(toolName: string) {
+		try {
+			return execFileSync("which", [toolName], { encoding: "utf8" }).trim() || undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	function clean() {
@@ -103,6 +114,17 @@ describe("should build tests-monorepo with both workspace drivers", () => {
 		execFileSync("node", [cliPath, "--workspace", ...extraArgs], {
 			cwd: fixtureRoot,
 			stdio: "pipe",
+		});
+	}
+
+	function runLune(placePath: string) {
+		if (lunePath === undefined || rojoPath === undefined) {
+			throw new Error("Lune runtime test requested without lune/rojo on PATH.");
+		}
+
+		return execFileSync(lunePath, ["run", path.join(fixtureRoot, "runWithLune.lua"), placePath], {
+			cwd: fixtureRoot,
+			encoding: "utf8",
 		});
 	}
 
@@ -139,6 +161,21 @@ describe("should build tests-monorepo with both workspace drivers", () => {
 		expect(solutionBuilder.leafInit).toBeTruthy();
 		expect(solutionBuilder.appMain).toBeTruthy();
 	});
+
+	(lunePath !== undefined && rojoPath !== undefined ? it : it.skip)(
+		"--useSolutionBuilder emits Luau that runs in Lune",
+		() => {
+			clean();
+			runCli(["--useSolutionBuilder"]);
+			const placePath = path.join(os.tmpdir(), "tests-monorepo-app.rbxlx");
+			execFileSync(rojoPath!, ["build", "packages/app", "-o", placePath], {
+				cwd: fixtureRoot,
+				stdio: "pipe",
+			});
+			const output = runLune(placePath).trim().split(/\r?\n/);
+			expect(output).toEqual(["Hello, monorepo!", "leaf v1.0.0"]);
+		},
+	);
 
 	it("both drivers emit byte-equal Luau", () => {
 		expect(solutionBuilder.leafInit).toBe(legacy.leafInit);
