@@ -130,7 +130,8 @@ function patternToRegExp(packagePattern: string) {
 }
 
 function matchesWorkspacePattern(workspacePath: string, packagePath: string, packagePattern: string) {
-	const relativePath = path.relative(workspacePath, packagePath).replace(/\\/g, "/");
+	// path.relative(root, root) returns "" but pnpm's "." pattern is meant to match the workspace root.
+	const relativePath = path.relative(workspacePath, packagePath).replace(/\\/g, "/") || ".";
 	return patternToRegExp(packagePattern).test(relativePath);
 }
 
@@ -565,6 +566,13 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 				const workspaceConfigPath = findWorkspaceConfigPath(projectPath);
 				const workspacePath = path.dirname(workspaceConfigPath);
 				const workspacePackages = orderWorkspacePackages(getWorkspacePackages(workspaceConfigPath));
+
+				if (workspacePackages.length === 0) {
+					throw new CLIError(
+						`No workspace packages discovered from ${path.relative(process.cwd(), workspaceConfigPath)}. ` +
+							`Each candidate must have a tsconfig.json and a package.json with a "name" field.`,
+					);
+				}
 
 				if (argv.legacyWorkspace) {
 					const manifest = createWorkspaceBuildManifest(workspacePath, workspacePackages);
