@@ -13,6 +13,13 @@ import { propertyAccessExpressionChain } from "TSTransformer/util/expressionChai
 import { getSourceFileFromModuleSpecifier } from "TSTransformer/util/getSourceFileFromModuleSpecifier";
 import ts from "typescript";
 
+function nodeModuleEmitExists(moduleOutPath: string): boolean {
+	if (fs.pathExistsSync(moduleOutPath)) return true;
+	if (moduleOutPath.endsWith(".lua")) return fs.pathExistsSync(moduleOutPath + "u");
+	if (moduleOutPath.endsWith(".luau")) return fs.pathExistsSync(moduleOutPath.slice(0, -1));
+	return false;
+}
+
 function getAbsoluteImport(moduleRbxPath: RbxPath) {
 	const pathExpressions = new Array<luau.Expression>();
 	const serviceName = moduleRbxPath[0];
@@ -106,7 +113,9 @@ function getNodeModulesImportParts(
 		return [luau.none()];
 	}
 
-	if (!fs.pathExistsSync(moduleOutPath)) {
+	// Roblox's require resolves .lua and .luau interchangeably, so a package whose package.json#main
+	// declares one extension while the publisher shipped the other is valid at runtime.
+	if (!nodeModuleEmitExists(moduleOutPath)) {
 		DiagnosticService.addDiagnostic(
 			errors.nodeModuleEmitMissing(moduleSpecifier, path.relative(state.data.projectPath, moduleOutPath)),
 		);
