@@ -5,6 +5,7 @@
 // transformPaths and transformTypeReferenceDirectives produce the final .d.ts
 // files with roblox-ts path and type-reference rewrites intact.
 
+import chokidar from "chokidar";
 import fs from "fs-extra";
 import path from "path";
 import { cleanup } from "Project/functions/cleanup";
@@ -277,4 +278,36 @@ export function watchWorkspaceWithSolutionBuilder(
 		{ verbose: cliOptions.verbose === true, watch: true },
 	);
 	builder.build();
+
+	// TS's own watcher tracks .ts/.d.ts/tsconfig.json but not package.json. Mirror the legacy driver
+	// by watching each member's package.json and bumping tsconfig.json's mtime on change so the
+	// existing TS watcher invalidates and rebuilds the affected project. Workspace dependency-graph
+	// changes (added/removed deps) still require a watch restart — same constraint as the legacy path.
+	const packageJsonByMember = workspaceMembers.map(member => ({
+		packageJsonPath: path.join(path.dirname(member.tsConfigPath), "package.json"),
+		tsConfigPath: member.tsConfigPath,
+	}));
+	const packageJsonPaths = packageJsonByMember
+		.map(entry => entry.packageJsonPath)
+		.filter(packageJsonPath => fs.pathExistsSync(packageJsonPath));
+	if (packageJsonPaths.length > 0) {
+		chokidar
+			.watch(packageJsonPaths, {
+				awaitWriteFinish: { pollInterval: 10, stabilityThreshold: 50 },
+				ignoreInitial: true,
+				usePolling: cliOptions.usePolling,
+			})
+			.on("change", changedPath => {
+				const entry = packageJsonByMember.find(
+					member => path.normalize(member.packageJsonPath) === path.normalize(changedPath),
+				);
+				if (entry === undefined) return;
+				const now = new Date();
+				try {
+					fs.utimesSync(entry.tsConfigPath, now, now);
+				} catch {
+					// Best-effort: if touch fails, the user can still trigger a rebuild manually.
+				}
+			});
+	}
 }
