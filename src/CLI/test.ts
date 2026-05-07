@@ -150,31 +150,20 @@ describe("should build tests-monorepo with both workspace drivers", () => {
 		ensureSymlink("../../packages/leaf", path.join(fixtureRoot, "node_modules", "@ws", "leaf"));
 	});
 
-	let legacy: { leafInit: string; appMain: string };
-	let solutionBuilder: { leafInit: string; appMain: string };
-
-	it("legacy --workspace --legacyWorkspace produces emit", () => {
-		clean();
-		runCli(["--legacyWorkspace"]);
-		legacy = snapshotEmit();
-		expect(legacy.leafInit).toContain("Hello, ");
-		expect(legacy.appMain).toContain('"@ws"');
-		expect(legacy.appMain).toContain('"leaf"');
-	});
-
-	it("--workspace (default driver) produces emit", () => {
+	it("--workspace produces emit", () => {
 		clean();
 		runCli([]);
-		solutionBuilder = snapshotEmit();
-		expect(solutionBuilder.leafInit).toBeTruthy();
-		expect(solutionBuilder.appMain).toBeTruthy();
+		const snapshot = snapshotEmit();
+		expect(snapshot.leafInit).toContain("Hello, ");
+		expect(snapshot.appMain).toContain('"@ws"');
+		expect(snapshot.appMain).toContain('"leaf"');
 	});
 
 	(lunePath !== undefined && rojoPath !== undefined ? it : it.skip)(
-		"--useSolutionBuilder emits Luau that runs in Lune",
+		"--workspace emits Luau that runs in Lune",
 		() => {
 			clean();
-			runCli(["--useSolutionBuilder"]);
+			runCli([]);
 			const placePath = path.join(os.tmpdir(), "tests-monorepo-app.rbxlx");
 			execFileSync(rojoPath!, ["build", "packages/app", "-o", placePath], {
 				cwd: fixtureRoot,
@@ -184,11 +173,6 @@ describe("should build tests-monorepo with both workspace drivers", () => {
 			expect(output).toEqual(["Hello, monorepo!", "leaf v1.0.0"]);
 		},
 	);
-
-	it("both drivers emit byte-equal Luau", () => {
-		expect(solutionBuilder.leafInit).toBe(legacy.leafInit);
-		expect(solutionBuilder.appMain).toBe(legacy.appMain);
-	});
 
 	it("--workspace reports node_modules import with missing emit", () => {
 		clean();
