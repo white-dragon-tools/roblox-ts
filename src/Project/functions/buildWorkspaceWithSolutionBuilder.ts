@@ -215,26 +215,38 @@ function configureSolutionBuilderHost(
 		) as ProjectOptions;
 		projectOptions.workspaceBuildArtifacts = collectWorkspaceBuildArtifacts(tsConfigPath, parseConfig);
 
-		const data = createProjectData(tsConfigPath, projectOptions);
-		const pathTranslator = createPathTranslator(builderProgram, data);
-		cleanup(pathTranslator);
-		copyInclude(data);
-		const rootDirs = getRootDirs(compilerOptions);
-		copyFiles(data, pathTranslator, new Set(rootDirs));
+		// Match the legacy buildProject contract: chdir into the package directory before calling
+		// compileFiles. Some TS transformers (notably rbxts-transformer-flamework) call
+		// ts.findConfigFile from cwd inside their own initializers, so without this they search the
+		// workspace root instead of the per-package tsconfig. Restore cwd in finally.
+		const originalCwd = process.cwd();
+		const packageDir = path.dirname(tsConfigPath);
+		try {
+			process.chdir(packageDir);
 
-		const hints = changedHintsByProgram.get(builderProgram);
-		const sourceFiles = (
-			hints !== undefined
-				? getChangedSourceFiles(builderProgram, hints)
-				: program.getSourceFiles().filter(sourceFile => !sourceFile.isDeclarationFile)
-		).filter(sourceFile => rootDirs.some(rootDir => isPathDescendantOf(sourceFile.fileName, rootDir)));
-		const emitResult = compileFiles(program, data, pathTranslator, sourceFiles);
+			const data = createProjectData(tsConfigPath, projectOptions);
+			const pathTranslator = createPathTranslator(builderProgram, data);
+			cleanup(pathTranslator);
+			copyInclude(data);
+			const rootDirs = getRootDirs(compilerOptions);
+			copyFiles(data, pathTranslator, new Set(rootDirs));
 
-		for (const diagnostic of emitResult.diagnostics) {
-			diagnosticReporter(diagnostic);
-		}
-		if (emitResult.diagnostics.some(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error)) {
-			success = false;
+			const hints = changedHintsByProgram.get(builderProgram);
+			const sourceFiles = (
+				hints !== undefined
+					? getChangedSourceFiles(builderProgram, hints)
+					: program.getSourceFiles().filter(sourceFile => !sourceFile.isDeclarationFile)
+			).filter(sourceFile => rootDirs.some(rootDir => isPathDescendantOf(sourceFile.fileName, rootDir)));
+			const emitResult = compileFiles(program, data, pathTranslator, sourceFiles);
+
+			for (const diagnostic of emitResult.diagnostics) {
+				diagnosticReporter(diagnostic);
+			}
+			if (emitResult.diagnostics.some(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error)) {
+				success = false;
+			}
+		} finally {
+			process.chdir(originalCwd);
 		}
 	};
 
