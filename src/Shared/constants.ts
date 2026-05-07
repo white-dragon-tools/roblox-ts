@@ -10,6 +10,7 @@ export const COMPILER_VERSION: string = require("../../package.json").version;
 
 export const NODE_MODULES = "node_modules";
 export const RBXTS_SCOPE = "@rbxts";
+export const WORKSPACE_BUILD_ARTIFACTS = ["flamework.build"];
 
 export const TS_EXT = ".ts";
 export const TSX_EXT = ".tsx";

@@ -1,10 +1,9 @@
-// Experimental workspace driver backed by ts.createSolutionBuilder.
-// Hidden behind --useSolutionBuilder. The non-experimental code path remains
-// the in-tree pnpm-workspace parser + topo + manifest in src/CLI/commands/build.ts.
+// Workspace driver backed by ts.createSolutionBuilder.
 //
-// Open spike items (intentionally not addressed yet):
-// - Double .d.ts emit: TS's pre-hook emit writes .d.ts; compileFiles re-emits via
-//   transformPaths/transformTypeReferenceDirectives. Wasteful but correct.
+// SolutionBuilder's TS emit writes declarations before roblox-ts transforms run.
+// compileFiles intentionally re-emits declarations with afterDeclarations so
+// transformPaths and transformTypeReferenceDirectives produce the final .d.ts
+// files with roblox-ts path and type-reference rewrites intact.
 
 import fs from "fs-extra";
 import path from "path";
@@ -18,15 +17,11 @@ import { getChangedSourceFiles } from "Project/functions/getChangedSourceFiles";
 import { validateCompilerOptions } from "Project/functions/validateCompilerOptions";
 import { isPathDescendantOf } from "Shared/util/isPathDescendantOf";
 import { LogService } from "Shared/classes/LogService";
-import { DEFAULT_PROJECT_OPTIONS } from "Shared/constants";
+import { DEFAULT_PROJECT_OPTIONS, WORKSPACE_BUILD_ARTIFACTS } from "Shared/constants";
 import { ProjectOptions } from "Shared/types";
 import { getNodeModulesPaths } from "Shared/util/getNodeModulesPaths";
 import { getRootDirs } from "Shared/util/getRootDirs";
 import ts from "typescript";
-
-// Mirrors WORKSPACE_BUILD_ARTIFACTS in src/CLI/commands/build.ts. Kept duplicated for spike isolation;
-// should be promoted to a shared constant if/when this driver replaces the legacy path.
-const WORKSPACE_BUILD_ARTIFACTS = ["flamework.build"];
 
 function resolveProjectReferencePath(refRawPath: string, fromConfigPath: string): string {
 	const absolute = path.resolve(path.dirname(fromConfigPath), refRawPath);
