@@ -145,18 +145,18 @@ describe("should build tests-monorepo with both workspace drivers", () => {
 	let legacy: { leafInit: string; appMain: string };
 	let solutionBuilder: { leafInit: string; appMain: string };
 
-	it("legacy --workspace produces emit", () => {
+	it("legacy --workspace --legacyWorkspace produces emit", () => {
 		clean();
-		runCli([]);
+		runCli(["--legacyWorkspace"]);
 		legacy = snapshotEmit();
 		expect(legacy.leafInit).toContain("Hello, ");
 		expect(legacy.appMain).toContain('"@ws"');
 		expect(legacy.appMain).toContain('"leaf"');
 	});
 
-	it("--useSolutionBuilder produces emit", () => {
+	it("--workspace (default driver) produces emit", () => {
 		clean();
-		runCli(["--useSolutionBuilder"]);
+		runCli([]);
 		solutionBuilder = snapshotEmit();
 		expect(solutionBuilder.leafInit).toBeTruthy();
 		expect(solutionBuilder.appMain).toBeTruthy();
@@ -182,13 +182,13 @@ describe("should build tests-monorepo with both workspace drivers", () => {
 		expect(solutionBuilder.appMain).toBe(legacy.appMain);
 	});
 
-	it("--useSolutionBuilder reports node_modules import with missing emit", () => {
+	it("--workspace reports node_modules import with missing emit", () => {
 		clean();
 		const leafPackageJsonPath = path.join(fixtureRoot, "packages", "leaf", "package.json");
 		const original = fs.readFileSync(leafPackageJsonPath, "utf8");
 		try {
 			fs.writeFileSync(leafPackageJsonPath, original.replace("out/init.luau", "out/missing.luau"));
-			expect(() => runCli(["--useSolutionBuilder"])).toThrow();
+			expect(() => runCli([])).toThrow();
 		} finally {
 			fs.writeFileSync(leafPackageJsonPath, original);
 			clean();

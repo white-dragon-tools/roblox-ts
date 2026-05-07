@@ -13,8 +13,9 @@ Only behavior unique to CLI environments should go here. Any behavior that is co
 **commands/build.ts** - the `build` command, this runs by default and can have the following flags:
 
 -   `--project, -p` - Location of the tsconfig.json or folder containing the tsconfig.json _(defaults to ".")_
--   `--workspace` - Build all tsconfig projects in a pnpm workspace, ordered by workspace dependencies.
--   `--watch, -w` - Enable watch mode, recompiles files as they change. With `--workspace`, this rebuilds changed packages and their dependents. _(defaults to false)_
+-   `--workspace` - Build all tsconfig projects in a pnpm workspace with the TypeScript SolutionBuilder driver.
+-   `--legacyWorkspace` - Use the legacy in-tree pnpm workspace driver. Hidden opt-out for one release cycle.
+-   `--watch, -w` - Enable watch mode, recompiles files as they change. With `--workspace`, this uses SolutionBuilder watch mode. _(defaults to false)_
 -   `--includePath, -i` - Path to where the runtime library files should be stored. _(defaults to "include")_
 -   `--rojo` - Path to the Rojo configuration file. By default this will attempt to find a \*.project.json in your project folder.
 

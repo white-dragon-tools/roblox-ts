@@ -16,7 +16,7 @@ import { createProjectProgram } from "Project/functions/createProjectProgram";
 import { getChangedSourceFiles } from "Project/functions/getChangedSourceFiles";
 import { setupProjectWatchProgram } from "Project/functions/setupProjectWatchProgram";
 import { LogService } from "Shared/classes/LogService";
-import { DEFAULT_PROJECT_OPTIONS, ProjectType } from "Shared/constants";
+import { DEFAULT_PROJECT_OPTIONS, ProjectType, WORKSPACE_BUILD_ARTIFACTS } from "Shared/constants";
 import { LoggableError } from "Shared/errors/LoggableError";
 import { ProjectOptions } from "Shared/types";
 import { getRootDirs } from "Shared/util/getRootDirs";
@@ -174,7 +174,6 @@ interface WorkspaceBuildManifest {
 }
 
 const WORKSPACE_BUILD_MANIFEST_NAME = ".rbxtsc-workspace-build.json";
-const WORKSPACE_BUILD_ARTIFACTS = ["flamework.build"];
 
 function getWorkspacePackages(workspaceConfigPath: string) {
 	const workspacePath = path.dirname(workspaceConfigPath);
@@ -454,6 +453,7 @@ async function watchWorkspacePackages(
 }
 
 interface BuildFlags {
+	legacyWorkspace?: boolean;
 	project: string;
 	workspace?: boolean;
 	useSolutionBuilder?: boolean;
@@ -477,13 +477,19 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 			})
 			.option("workspace", {
 				boolean: true,
-				describe: "build all projects in a pnpm workspace",
+				describe: "build all projects in a pnpm workspace using SolutionBuilder",
 			})
 			.option("useSolutionBuilder", {
 				implies: "workspace",
 				boolean: true,
 				hidden: true,
-				describe: "experimental: drive workspace build with ts.createSolutionBuilder",
+				describe: "deprecated: SolutionBuilder is the default workspace driver",
+			})
+			.option("legacyWorkspace", {
+				implies: "workspace",
+				boolean: true,
+				hidden: true,
+				describe: "use the legacy in-tree workspace driver",
 			})
 			// DO NOT PROVIDE DEFAULTS BELOW HERE, USE DEFAULT_PROJECT_OPTIONS
 			.option("watch", {
@@ -551,31 +557,16 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 
 			const diagnosticReporter = ts.createDiagnosticReporter(ts.sys, true);
 
+			if (argv.useSolutionBuilder) {
+				process.stderr.write("--useSolutionBuilder is now the default and will be removed in a future release\n");
+			}
+
 			if (argv.workspace) {
 				const workspaceConfigPath = findWorkspaceConfigPath(projectPath);
 				const workspacePath = path.dirname(workspaceConfigPath);
 				const workspacePackages = orderWorkspacePackages(getWorkspacePackages(workspaceConfigPath));
 
-				if (argv.useSolutionBuilder) {
-					const tsConfigByName = new Map(
-						workspacePackages.map(workspacePackage => [
-							workspacePackage.name,
-							workspacePackage.tsConfigPath,
-						]),
-					);
-					const members = workspacePackages.map(workspacePackage => ({
-						name: workspacePackage.name,
-						tsConfigPath: workspacePackage.tsConfigPath,
-						dependencyTsConfigPaths: workspacePackage.dependencies
-							.map(depName => tsConfigByName.get(depName))
-							.filter((value): value is string => value !== undefined),
-					}));
-					if (argv.watch) {
-						watchWorkspaceWithSolutionBuilder(members, argv, diagnosticReporter);
-					} else if (!buildWorkspaceWithSolutionBuilder(members, argv, diagnosticReporter)) {
-						process.exitCode = 1;
-					}
-				} else {
+				if (argv.legacyWorkspace) {
 					const manifest = createWorkspaceBuildManifest(workspacePath, workspacePackages);
 					writeWorkspaceBuildManifest(workspacePath, manifest);
 					if (argv.watch) {
@@ -594,6 +585,25 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 							argv,
 							diagnosticReporter,
 						);
+					}
+				} else {
+					const tsConfigByName = new Map(
+						workspacePackages.map(workspacePackage => [
+							workspacePackage.name,
+							workspacePackage.tsConfigPath,
+						]),
+					);
+					const members = workspacePackages.map(workspacePackage => ({
+						name: workspacePackage.name,
+						tsConfigPath: workspacePackage.tsConfigPath,
+						dependencyTsConfigPaths: workspacePackage.dependencies
+							.map(depName => tsConfigByName.get(depName))
+							.filter((value): value is string => value !== undefined),
+					}));
+					if (argv.watch) {
+						watchWorkspaceWithSolutionBuilder(members, argv, diagnosticReporter);
+					} else if (!buildWorkspaceWithSolutionBuilder(members, argv, diagnosticReporter)) {
+						process.exitCode = 1;
 					}
 				}
 			} else {
