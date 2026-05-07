@@ -1,5 +1,6 @@
 import luau from "@roblox-ts/luau-ast";
 import { FileRelation, NetworkType, RbxPath, RbxPathParent, RbxType, RojoResolver } from "@roblox-ts/rojo-resolver";
+import fs from "fs-extra";
 import path from "path";
 import { NODE_MODULES, PARENT_FIELD, ProjectType } from "Shared/constants";
 import { errors } from "Shared/diagnostics";
@@ -102,6 +103,13 @@ function getNodeModulesImportParts(
 
 	if (!validateModule(state, moduleScope)) {
 		DiagnosticService.addDiagnostic(errors.noInvalidModule(moduleSpecifier));
+		return [luau.none()];
+	}
+
+	if (!fs.pathExistsSync(moduleOutPath)) {
+		DiagnosticService.addDiagnostic(
+			errors.nodeModuleEmitMissing(moduleSpecifier, path.relative(state.data.projectPath, moduleOutPath)),
+		);
 		return [luau.none()];
 	}
 

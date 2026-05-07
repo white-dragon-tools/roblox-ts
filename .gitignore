@@ -12,3 +12,6 @@ out
 /tests/*.rbxl
 /tests/*.rbxl.lock
 /tests/include
+
+/tests-monorepo/**/include
+.rbxtsc-workspace-build.json

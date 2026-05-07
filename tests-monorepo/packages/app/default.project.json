@@ -1,0 +1,30 @@
+{
+	"name": "app",
+	"tree": {
+		"$className": "DataModel",
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"include": {
+				"$path": "include",
+				"node_modules": {
+					"$className": "Folder",
+					"@rbxts": {
+						"$path": "../../node_modules/@rbxts"
+					},
+					"@ws": {
+						"$className": "Folder",
+						"leaf": {
+							"$path": "../../node_modules/@ws/leaf/out"
+						}
+					}
+				}
+			}
+		},
+		"ServerScriptService": {
+			"$className": "ServerScriptService",
+			"app": {
+				"$path": "out"
+			}
+		}
+	}
+}

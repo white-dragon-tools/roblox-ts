@@ -215,6 +215,13 @@ export const errors = {
 				`If this package is resolved through a workspace node_modules, make sure default.project.json maps the npm scope to that same node_modules location.`,
 			),
 	]),
+	nodeModuleEmitMissing: errorWithContext((path: string) => [
+		`Imported package's expected output file does not exist: ${path}`,
+		suggestion(
+			`Verify that the package's "main" field in package.json matches its emitted Luau path (e.g. "out/init.luau" for single-entry packages).`,
+		),
+		suggestion(`In a workspace, also verify that dependent packages have been built before this one.`),
+	]),
 	noPackageImportWithoutScope: errorWithContext((path: string, rbxPath: RbxPath) => [
 		`Imported package Roblox path is missing an npm scope!`,
 		`Package path: ${path}`,
