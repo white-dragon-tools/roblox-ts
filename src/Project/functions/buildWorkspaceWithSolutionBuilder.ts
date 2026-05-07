@@ -101,10 +101,19 @@ function configureSolutionBuilderHost(
 		memberByConfigPath.set(path.normalize(member.tsConfigPath), member);
 	}
 
-	const parsedCommandLineCache = new Map<string, ts.ParsedCommandLine | undefined>();
+	// Cached entries are keyed by mtime so a tsconfig edit during watch invalidates the cache
+	// (and the auto-inject mutations applied to it) and forces a fresh parse on the next lookup.
+	interface CachedParsedCommandLine {
+		mtimeMs: number | undefined;
+		parsed: ts.ParsedCommandLine | undefined;
+	}
+	const parsedCommandLineCache = new Map<string, CachedParsedCommandLine>();
 	const parseConfig = (configPath: string): ts.ParsedCommandLine | undefined => {
-		if (parsedCommandLineCache.has(configPath)) {
-			return parsedCommandLineCache.get(configPath);
+		const mtime = ts.sys.getModifiedTime?.(configPath);
+		const mtimeMs = mtime ? mtime.getTime() : undefined;
+		const cached = parsedCommandLineCache.get(configPath);
+		if (cached !== undefined && cached.mtimeMs === mtimeMs) {
+			return cached.parsed;
 		}
 		const parsed = ts.getParsedCommandLineOfConfigFile(configPath, undefined, {
 			fileExists: ts.sys.fileExists,
@@ -114,7 +123,7 @@ function configureSolutionBuilderHost(
 			readFile: ts.sys.readFile,
 			useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
 		});
-		parsedCommandLineCache.set(configPath, parsed);
+		parsedCommandLineCache.set(configPath, { mtimeMs, parsed });
 		return parsed;
 	};
 
