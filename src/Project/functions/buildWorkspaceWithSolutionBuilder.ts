@@ -102,6 +102,16 @@ function configureSolutionBuilderHost(
 		memberByConfigPath.set(path.normalize(member.tsConfigPath), member);
 	}
 
+	// composite is required for tsconfigs that ARE referenced by other workspace members; injecting
+	// it on consumers (or single-package workspaces with no internal refs) is unnecessary and triggers
+	// composite-mode strictness like TS6307 on JSON imports the user never opted in to.
+	const referencedConfigPaths = new Set<string>();
+	for (const member of workspaceMembers) {
+		for (const depConfigPath of member.dependencyTsConfigPaths) {
+			referencedConfigPaths.add(path.normalize(depConfigPath));
+		}
+	}
+
 	// Cached entries are keyed by mtime so a tsconfig edit during watch invalidates the cache
 	// (and the auto-inject mutations applied to it) and forces a fresh parse on the next lookup.
 	interface CachedParsedCommandLine {
@@ -138,10 +148,13 @@ function configureSolutionBuilderHost(
 		const parsed = parseConfig(fileName);
 		if (parsed === undefined) return undefined;
 
-		const member = memberByConfigPath.get(path.normalize(fileName));
+		const normalizedConfigPath = path.normalize(fileName);
+		const member = memberByConfigPath.get(normalizedConfigPath);
 		if (member !== undefined) {
-			parsed.options.composite = true;
-			parsed.options.declaration = true;
+			if (referencedConfigPaths.has(normalizedConfigPath)) {
+				parsed.options.composite = true;
+				parsed.options.declaration = true;
+			}
 			if (parsed.options.skipLibCheck === undefined) {
 				parsed.options.skipLibCheck = true;
 			}
