@@ -7,14 +7,12 @@
 // the in-tree pnpm-workspace parser + topo + manifest in src/CLI/commands/build.ts.
 //
 // Open spike items (intentionally not addressed yet):
-// - Flamework cross-package macro: the seedFlameworkBuildInfoCandidates path in
-//   createTransformerList runs during the inner program's emit, but workspaceBuildArtifacts
-//   is not yet plumbed through this driver.
 // - User ergonomics: requires composite/references/skipLibCheck per-package; could be
 //   auto-injected from getWorkspacePackages in a future iteration.
 // - Double .d.ts emit: TS's pre-hook emit writes .d.ts; compileFiles re-emits via
 //   transformPaths/transformTypeReferenceDirectives. Wasteful but correct.
 
+import fs from "fs-extra";
 import path from "path";
 import { cleanup } from "Project/functions/cleanup";
 import { compileFiles } from "Project/functions/compileFiles";
@@ -32,6 +30,52 @@ import { getNodeModulesPaths } from "Shared/util/getNodeModulesPaths";
 import { getRootDirs } from "Shared/util/getRootDirs";
 import ts from "typescript";
 
+// Mirrors WORKSPACE_BUILD_ARTIFACTS in src/CLI/commands/build.ts. Kept duplicated for spike isolation;
+// should be promoted to a shared constant if/when this driver replaces the legacy path.
+const WORKSPACE_BUILD_ARTIFACTS = ["flamework.build"];
+
+function resolveProjectReferencePath(refRawPath: string, fromConfigPath: string): string {
+	const absolute = path.resolve(path.dirname(fromConfigPath), refRawPath);
+	if (fs.pathExistsSync(absolute) && fs.statSync(absolute).isDirectory()) {
+		return path.join(absolute, "tsconfig.json");
+	}
+	return absolute;
+}
+
+function collectWorkspaceBuildArtifacts(
+	tsConfigPath: string,
+	parseConfig: (configPath: string) => ts.ParsedCommandLine | undefined,
+): Array<string> {
+	const artifacts = new Array<string>();
+	const visited = new Set<string>();
+
+	const visit = (configPath: string) => {
+		if (visited.has(configPath)) return;
+		visited.add(configPath);
+
+		const parsed = parseConfig(configPath);
+		if (parsed === undefined) return;
+
+		for (const ref of parsed.projectReferences ?? []) {
+			visit(resolveProjectReferencePath(ref.path, configPath));
+		}
+
+		const packagePath = path.dirname(configPath);
+		for (const artifactName of WORKSPACE_BUILD_ARTIFACTS) {
+			const artifactPath = path.join(packagePath, artifactName);
+			if (fs.pathExistsSync(artifactPath)) {
+				artifacts.push(artifactPath);
+			}
+		}
+	};
+
+	const rootParsed = parseConfig(tsConfigPath);
+	for (const ref of rootParsed?.projectReferences ?? []) {
+		visit(resolveProjectReferencePath(ref.path, tsConfigPath));
+	}
+	return artifacts;
+}
+
 function readTsConfigProjectOptions(tsConfigPath: string): Partial<ProjectOptions> | undefined {
 	const rawJson = ts.sys.readFile(tsConfigPath);
 	if (rawJson === undefined) return undefined;
@@ -45,6 +89,25 @@ export function buildWorkspaceWithSolutionBuilder(
 	diagnosticReporter: ts.DiagnosticReporter,
 ): boolean {
 	const cliOptionEntries = Object.entries(cliOptions).filter(([, value]) => value !== undefined);
+
+	// Shared cache between host.getParsedCommandLine and collectWorkspaceBuildArtifacts so dependency
+	// tsconfigs are parsed exactly once per build pass.
+	const parsedCommandLineCache = new Map<string, ts.ParsedCommandLine | undefined>();
+	const parseConfig = (configPath: string): ts.ParsedCommandLine | undefined => {
+		if (parsedCommandLineCache.has(configPath)) {
+			return parsedCommandLineCache.get(configPath);
+		}
+		const parsed = ts.getParsedCommandLineOfConfigFile(configPath, undefined, {
+			fileExists: ts.sys.fileExists,
+			getCurrentDirectory: ts.sys.getCurrentDirectory,
+			onUnRecoverableConfigFileDiagnostic: diagnostic => diagnosticReporter(diagnostic),
+			readDirectory: ts.sys.readDirectory,
+			readFile: ts.sys.readFile,
+			useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
+		});
+		parsedCommandLineCache.set(configPath, parsed);
+		return parsed;
+	};
 
 	// Captured before TS's emit consumes BuilderProgram.changedFilesSet, so afterProgramEmitAndDiagnostics
 	// can drive incremental Luau emit through getChangedSourceFiles(program, pathHints).
@@ -88,14 +151,7 @@ export function buildWorkspaceWithSolutionBuilder(
 	};
 
 	host.getParsedCommandLine = fileName => {
-		const parsed = ts.getParsedCommandLineOfConfigFile(fileName, undefined, {
-			fileExists: ts.sys.fileExists,
-			getCurrentDirectory: ts.sys.getCurrentDirectory,
-			onUnRecoverableConfigFileDiagnostic: diagnostic => diagnosticReporter(diagnostic),
-			readDirectory: ts.sys.readDirectory,
-			readFile: ts.sys.readFile,
-			useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
-		});
+		const parsed = parseConfig(fileName);
 		if (parsed === undefined) return undefined;
 		const projectPath = path.dirname(fileName);
 		validateCompilerOptions(parsed.options, projectPath, getNodeModulesPaths(projectPath));
@@ -118,6 +174,7 @@ export function buildWorkspaceWithSolutionBuilder(
 			readTsConfigProjectOptions(tsConfigPath),
 			Object.fromEntries(cliOptionEntries),
 		) as ProjectOptions;
+		projectOptions.workspaceBuildArtifacts = collectWorkspaceBuildArtifacts(tsConfigPath, parseConfig);
 
 		const data = createProjectData(tsConfigPath, projectOptions);
 		const pathTranslator = createPathTranslator(builderProgram, data);
