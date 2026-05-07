@@ -203,3 +203,50 @@ describe("should build tests-monorepo with both workspace drivers", () => {
 		}
 	});
 });
+
+describe("should build tests-monorepo-complex with inferred workspace references", () => {
+	const fixtureRoot = path.join(PACKAGE_ROOT, "tests-monorepo-complex");
+	const cliPath = path.join(PACKAGE_ROOT, "out", "CLI", "cli.js");
+	const appOutDir = path.join(fixtureRoot, "packages", "app", "out");
+	const jsonLeafOutDir = path.join(fixtureRoot, "packages", "json-leaf", "out");
+
+	function ensureSymlink(target: string, linkPath: string) {
+		const stat = fs.lstatSync(linkPath, { throwIfNoEntry: false });
+		if (stat === undefined) {
+			fs.symlinkSync(target, linkPath);
+		} else if (stat.isSymbolicLink() && !fs.existsSync(linkPath)) {
+			fs.unlinkSync(linkPath);
+			fs.symlinkSync(target, linkPath);
+		}
+	}
+
+	function clean() {
+		fs.removeSync(appOutDir);
+		fs.removeSync(jsonLeafOutDir);
+		fs.removeSync(path.join(fixtureRoot, "packages", "app", "tsconfig.tsbuildinfo"));
+		fs.removeSync(path.join(fixtureRoot, "packages", "json-leaf", "tsconfig.tsbuildinfo"));
+		fs.removeSync(path.join(fixtureRoot, ".rbxtsc-workspace-build.json"));
+	}
+
+	function runCli(extraArgs: Array<string>) {
+		execFileSync("node", [cliPath, "--workspace", "--project", "packages/app/tsconfig.json", ...extraArgs], {
+			cwd: fixtureRoot,
+			stdio: "pipe",
+		});
+	}
+
+	beforeAll(() => {
+		fs.ensureDirSync(path.join(fixtureRoot, "node_modules", "@complex"));
+		ensureSymlink("../../tests/node_modules/@rbxts", path.join(fixtureRoot, "node_modules", "@rbxts"));
+		ensureSymlink("../../packages/json-leaf", path.join(fixtureRoot, "node_modules", "@complex", "json-leaf"));
+	});
+
+	afterAll(clean);
+
+	it("--workspace includes JSON modules when auto-compositing referenced packages", () => {
+		clean();
+		runCli([]);
+		const leafInit = fs.readFileSync(path.join(jsonLeafOutDir, "init.luau"), "utf8");
+		expect(leafInit).toContain('TS.import(script, script, "config")');
+	});
+});

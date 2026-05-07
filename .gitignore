@@ -16,3 +16,5 @@ out
 /tests-monorepo/**/include
 .rbxtsc-workspace-build.json
 /tests-monorepo/packages/*/tsconfig.tsbuildinfo
+/tests-monorepo-complex/**/include
+/tests-monorepo-complex/packages/*/tsconfig.tsbuildinfo

@@ -1,0 +1,9 @@
+{
+	"name": "@complex/app",
+	"version": "1.0.0",
+	"main": "out/init.luau",
+	"types": "out/index.d.ts",
+	"dependencies": {
+		"@complex/json-leaf": "workspace:*"
+	}
+}

@@ -1,0 +1,6 @@
+{
+	"name": "@complex/json-leaf",
+	"version": "1.0.0",
+	"main": "out/init.luau",
+	"types": "out/index.d.ts"
+}

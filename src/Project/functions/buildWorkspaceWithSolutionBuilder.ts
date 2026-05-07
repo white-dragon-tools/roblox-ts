@@ -84,6 +84,24 @@ function readTsConfigProjectOptions(tsConfigPath: string): Partial<ProjectOption
 	return config?.rbxts ?? config?.rbxtsc;
 }
 
+function includeJsonModuleFiles(parsed: ts.ParsedCommandLine) {
+	if (parsed.options.resolveJsonModule !== true) return;
+
+	const rootDirs = parsed.options.rootDir ? [parsed.options.rootDir] : parsed.options.rootDirs;
+	if (rootDirs === undefined) return;
+
+	const fileNames = new Set(parsed.fileNames.map(fileName => path.normalize(fileName)));
+	for (const rootDir of rootDirs) {
+		for (const fileName of ts.sys.readDirectory(rootDir, [".json"])) {
+			const normalizedFileName = path.normalize(fileName);
+			if (!fileNames.has(normalizedFileName)) {
+				parsed.fileNames.push(fileName);
+				fileNames.add(normalizedFileName);
+			}
+		}
+	}
+}
+
 /**
  * Hooks shared by both --useSolutionBuilder and --useSolutionBuilder --watch.
  * Mutates `host` in place. Returns a getter so the caller can read `success` after build.
@@ -154,6 +172,7 @@ function configureSolutionBuilderHost(
 			if (referencedConfigPaths.has(normalizedConfigPath)) {
 				parsed.options.composite = true;
 				parsed.options.declaration = true;
+				includeJsonModuleFiles(parsed);
 			}
 			if (parsed.options.skipLibCheck === undefined) {
 				parsed.options.skipLibCheck = true;
