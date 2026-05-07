@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { execFileSync } from "child_process";
 import fs from "fs-extra";
 import path from "path";
 import { compileFiles } from "Project/functions/compileFiles";
@@ -77,4 +78,83 @@ describe("should compile tests project", () => {
 			});
 		}
 	}
+});
+
+describe("should build tests-monorepo with both workspace drivers", () => {
+	const fixtureRoot = path.join(PACKAGE_ROOT, "tests-monorepo");
+	const cliPath = path.join(PACKAGE_ROOT, "out", "CLI", "cli.js");
+	const leafOutDir = path.join(fixtureRoot, "packages", "leaf", "out");
+	const appOutDir = path.join(fixtureRoot, "packages", "app", "out");
+
+	function ensureSymlink(target: string, linkPath: string) {
+		if (!fs.existsSync(linkPath)) fs.symlinkSync(target, linkPath);
+	}
+
+	function clean() {
+		fs.removeSync(leafOutDir);
+		fs.removeSync(appOutDir);
+		fs.removeSync(path.join(fixtureRoot, "packages", "app", "include"));
+		fs.removeSync(path.join(fixtureRoot, "packages", "leaf", "tsconfig.tsbuildinfo"));
+		fs.removeSync(path.join(fixtureRoot, "packages", "app", "tsconfig.tsbuildinfo"));
+		fs.removeSync(path.join(fixtureRoot, ".rbxtsc-workspace-build.json"));
+	}
+
+	function runCli(extraArgs: Array<string>) {
+		execFileSync("node", [cliPath, "--workspace", ...extraArgs], {
+			cwd: fixtureRoot,
+			stdio: "pipe",
+		});
+	}
+
+	function snapshotEmit() {
+		return {
+			leafInit: fs.readFileSync(path.join(leafOutDir, "init.luau"), "utf8"),
+			appMain: fs.readFileSync(path.join(appOutDir, "main.server.luau"), "utf8"),
+		};
+	}
+
+	beforeAll(() => {
+		// Symlinks are gitignored; each fresh checkout / CI run needs them rebuilt.
+		fs.ensureDirSync(path.join(fixtureRoot, "node_modules", "@ws"));
+		ensureSymlink("../../tests/node_modules/@rbxts", path.join(fixtureRoot, "node_modules", "@rbxts"));
+		ensureSymlink("../../packages/leaf", path.join(fixtureRoot, "node_modules", "@ws", "leaf"));
+	});
+
+	let legacy: { leafInit: string; appMain: string };
+	let solutionBuilder: { leafInit: string; appMain: string };
+
+	it("legacy --workspace produces emit", () => {
+		clean();
+		runCli([]);
+		legacy = snapshotEmit();
+		expect(legacy.leafInit).toContain("Hello, ");
+		expect(legacy.appMain).toContain('"@ws"');
+		expect(legacy.appMain).toContain('"leaf"');
+	});
+
+	it("--useSolutionBuilder produces emit", () => {
+		clean();
+		runCli(["--useSolutionBuilder"]);
+		solutionBuilder = snapshotEmit();
+		expect(solutionBuilder.leafInit).toBeTruthy();
+		expect(solutionBuilder.appMain).toBeTruthy();
+	});
+
+	it("both drivers emit byte-equal Luau", () => {
+		expect(solutionBuilder.leafInit).toBe(legacy.leafInit);
+		expect(solutionBuilder.appMain).toBe(legacy.appMain);
+	});
+
+	it("--useSolutionBuilder reports node_modules import with missing emit", () => {
+		clean();
+		const leafPackageJsonPath = path.join(fixtureRoot, "packages", "leaf", "package.json");
+		const original = fs.readFileSync(leafPackageJsonPath, "utf8");
+		try {
+			fs.writeFileSync(leafPackageJsonPath, original.replace("out/init.luau", "out/missing.luau"));
+			expect(() => runCli(["--useSolutionBuilder"])).toThrow();
+		} finally {
+			fs.writeFileSync(leafPackageJsonPath, original);
+			clean();
+		}
+	});
 });
