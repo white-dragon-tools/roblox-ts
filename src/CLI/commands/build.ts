@@ -554,8 +554,20 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 				const workspacePackages = orderWorkspacePackages(getWorkspacePackages(workspaceConfigPath));
 
 				if (argv.useSolutionBuilder) {
-					const tsConfigPaths = workspacePackages.map(workspacePackage => workspacePackage.tsConfigPath);
-					if (!buildWorkspaceWithSolutionBuilder(tsConfigPaths, argv, diagnosticReporter)) {
+					const tsConfigByName = new Map(
+						workspacePackages.map(workspacePackage => [
+							workspacePackage.name,
+							workspacePackage.tsConfigPath,
+						]),
+					);
+					const members = workspacePackages.map(workspacePackage => ({
+						name: workspacePackage.name,
+						tsConfigPath: workspacePackage.tsConfigPath,
+						dependencyTsConfigPaths: workspacePackage.dependencies
+							.map(depName => tsConfigByName.get(depName))
+							.filter((value): value is string => value !== undefined),
+					}));
+					if (!buildWorkspaceWithSolutionBuilder(members, argv, diagnosticReporter)) {
 						process.exitCode = 1;
 					}
 				} else {

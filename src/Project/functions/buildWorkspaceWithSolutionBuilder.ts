@@ -7,8 +7,6 @@
 // the in-tree pnpm-workspace parser + topo + manifest in src/CLI/commands/build.ts.
 //
 // Open spike items (intentionally not addressed yet):
-// - User ergonomics: requires composite/references/skipLibCheck per-package; could be
-//   auto-injected from getWorkspacePackages in a future iteration.
 // - Double .d.ts emit: TS's pre-hook emit writes .d.ts; compileFiles re-emits via
 //   transformPaths/transformTypeReferenceDirectives. Wasteful but correct.
 
@@ -40,6 +38,17 @@ function resolveProjectReferencePath(refRawPath: string, fromConfigPath: string)
 		return path.join(absolute, "tsconfig.json");
 	}
 	return absolute;
+}
+
+/**
+ * Minimum data the driver needs about each workspace package. Derived from getWorkspacePackages
+ * in build.ts; passed in so this driver does not re-parse pnpm-workspace.yaml.
+ */
+export interface WorkspaceMember {
+	name: string;
+	tsConfigPath: string;
+	/** tsconfig paths of *workspace* packages this one depends on (transitive resolution left to TS). */
+	dependencyTsConfigPaths: Array<string>;
 }
 
 function collectWorkspaceBuildArtifacts(
@@ -84,11 +93,16 @@ function readTsConfigProjectOptions(tsConfigPath: string): Partial<ProjectOption
 }
 
 export function buildWorkspaceWithSolutionBuilder(
-	projectTsConfigPaths: Array<string>,
+	workspaceMembers: Array<WorkspaceMember>,
 	cliOptions: Partial<ProjectOptions>,
 	diagnosticReporter: ts.DiagnosticReporter,
 ): boolean {
 	const cliOptionEntries = Object.entries(cliOptions).filter(([, value]) => value !== undefined);
+
+	const memberByConfigPath = new Map<string, WorkspaceMember>();
+	for (const member of workspaceMembers) {
+		memberByConfigPath.set(path.normalize(member.tsConfigPath), member);
+	}
 
 	// Shared cache between host.getParsedCommandLine and collectWorkspaceBuildArtifacts so dependency
 	// tsconfigs are parsed exactly once per build pass.
@@ -153,6 +167,32 @@ export function buildWorkspaceWithSolutionBuilder(
 	host.getParsedCommandLine = fileName => {
 		const parsed = parseConfig(fileName);
 		if (parsed === undefined) return undefined;
+
+		const member = memberByConfigPath.get(path.normalize(fileName));
+		if (member !== undefined) {
+			// SolutionBuilder requires composite (and therefore declaration). Skip lib check matches the
+			// per-file diagnostic semantics of the legacy --workspace path, which silently ignores type
+			// errors in node_modules .d.ts files.
+			parsed.options.composite = true;
+			parsed.options.declaration = true;
+			if (parsed.options.skipLibCheck === undefined) {
+				parsed.options.skipLibCheck = true;
+			}
+
+			const existingRefs = parsed.projectReferences ?? [];
+			const projectDir = path.dirname(fileName);
+			const existingRefDirs = new Set(
+				existingRefs.map(ref => path.normalize(path.resolve(projectDir, ref.path))),
+			);
+			const inferredRefs = member.dependencyTsConfigPaths
+				.map(depConfigPath => path.dirname(depConfigPath))
+				.filter(depDir => !existingRefDirs.has(path.normalize(depDir)))
+				.map(depDir => ({ path: depDir }) as ts.ProjectReference);
+			if (inferredRefs.length > 0) {
+				parsed.projectReferences = [...existingRefs, ...inferredRefs];
+			}
+		}
+
 		const projectPath = path.dirname(fileName);
 		validateCompilerOptions(parsed.options, projectPath, getNodeModulesPaths(projectPath));
 		return parsed;
@@ -199,7 +239,7 @@ export function buildWorkspaceWithSolutionBuilder(
 		}
 	};
 
-	const builder = ts.createSolutionBuilder(host, projectTsConfigPaths, {
+	const builder = ts.createSolutionBuilder(host, workspaceMembers.map(member => member.tsConfigPath), {
 		verbose: cliOptions.verbose === true,
 	});
 	const exitStatus = builder.build();
