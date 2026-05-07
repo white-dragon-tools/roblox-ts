@@ -90,7 +90,15 @@ describe("should build tests-monorepo with both workspace drivers", () => {
 	const appOutDir = path.join(fixtureRoot, "packages", "app", "out");
 
 	function ensureSymlink(target: string, linkPath: string) {
-		if (!fs.existsSync(linkPath)) fs.symlinkSync(target, linkPath);
+		// fs.existsSync follows symlinks, so a broken link reads as missing and the subsequent
+		// symlinkSync would throw EEXIST. Probe the link node with lstatSync and recreate when broken.
+		const stat = fs.lstatSync(linkPath, { throwIfNoEntry: false });
+		if (stat === undefined) {
+			fs.symlinkSync(target, linkPath);
+		} else if (stat.isSymbolicLink() && !fs.existsSync(linkPath)) {
+			fs.unlinkSync(linkPath);
+			fs.symlinkSync(target, linkPath);
+		}
 	}
 
 	function resolveToolPath(toolName: string) {
