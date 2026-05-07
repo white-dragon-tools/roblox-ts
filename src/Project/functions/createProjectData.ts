@@ -5,30 +5,10 @@ import { LogService } from "Shared/classes/LogService";
 import { NODE_MODULES } from "Shared/constants";
 import { ProjectError } from "Shared/errors/ProjectError";
 import { ProjectData, ProjectOptions } from "Shared/types";
+import { getNodeModulesPaths } from "Shared/util/getNodeModulesPaths";
 import ts from "typescript";
 
 const PACKAGE_REGEX = /^@[a-z0-9-]*\//;
-
-function addUniquePath(paths: Array<string>, fsPath: string) {
-	const normalizedPath = path.normalize(fsPath);
-	if (!paths.some(v => path.normalize(v) === normalizedPath)) {
-		paths.push(normalizedPath);
-	}
-}
-
-function getNodeModulesPaths(packagePath: string) {
-	const nodeModulesPaths = new Array<string>();
-	for (let currentPath = packagePath; ; currentPath = path.dirname(currentPath)) {
-		const nodeModulesPath = path.join(currentPath, NODE_MODULES);
-		if (currentPath === packagePath || fs.pathExistsSync(nodeModulesPath)) {
-			addUniquePath(nodeModulesPaths, nodeModulesPath);
-		}
-
-		const parentPath = path.dirname(currentPath);
-		if (parentPath === currentPath) break;
-	}
-	return nodeModulesPaths;
-}
 
 export function createProjectData(tsConfigPath: string, projectOptions: ProjectOptions): ProjectData {
 	const projectPath = path.dirname(tsConfigPath);

@@ -15,3 +15,4 @@ out
 
 /tests-monorepo/**/include
 .rbxtsc-workspace-build.json
+/tests-monorepo/packages/*/tsconfig.tsbuildinfo

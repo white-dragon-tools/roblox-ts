@@ -9,12 +9,14 @@
 		"noLib": true,
 		"resolveJsonModule": true,
 		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true,
 		"moduleDetection": "force",
 		"strict": true,
 		"target": "ESNext",
 		"typeRoots": ["node_modules/@rbxts"],
 		"rootDir": "src",
 		"outDir": "out",
-		"declaration": true
+		"declaration": true,
+		"composite": true
 	}
 }

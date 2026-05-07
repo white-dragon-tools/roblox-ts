@@ -6,6 +6,7 @@ import { cleanup } from "Project/functions/cleanup";
 import { compileFiles } from "Project/functions/compileFiles";
 import { copyFiles } from "Project/functions/copyFiles";
 import { copyInclude } from "Project/functions/copyInclude";
+import { buildWorkspaceWithSolutionBuilder } from "Project/functions/buildWorkspaceWithSolutionBuilder";
 import { createPathTranslator } from "Project/functions/createPathTranslator";
 import { createProjectData } from "Project/functions/createProjectData";
 import { createProjectProgram } from "Project/functions/createProjectProgram";
@@ -452,6 +453,7 @@ async function watchWorkspacePackages(
 interface BuildFlags {
 	project: string;
 	workspace?: boolean;
+	useSolutionBuilder?: boolean;
 }
 
 /**
@@ -473,6 +475,12 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 			.option("workspace", {
 				boolean: true,
 				describe: "build all projects in a pnpm workspace",
+			})
+			.option("useSolutionBuilder", {
+				implies: "workspace",
+				boolean: true,
+				hidden: true,
+				describe: "experimental: drive workspace build with ts.createSolutionBuilder",
 			})
 			// DO NOT PROVIDE DEFAULTS BELOW HERE, USE DEFAULT_PROJECT_OPTIONS
 			.option("watch", {
@@ -544,12 +552,32 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 				const workspaceConfigPath = findWorkspaceConfigPath(projectPath);
 				const workspacePath = path.dirname(workspaceConfigPath);
 				const workspacePackages = orderWorkspacePackages(getWorkspacePackages(workspaceConfigPath));
-				const manifest = createWorkspaceBuildManifest(workspacePath, workspacePackages);
-				writeWorkspaceBuildManifest(workspacePath, manifest);
-				if (argv.watch) {
-					await watchWorkspacePackages(workspacePath, manifest, workspacePackages, argv, diagnosticReporter);
+
+				if (argv.useSolutionBuilder) {
+					const tsConfigPaths = workspacePackages.map(workspacePackage => workspacePackage.tsConfigPath);
+					if (!buildWorkspaceWithSolutionBuilder(tsConfigPaths, argv, diagnosticReporter)) {
+						process.exitCode = 1;
+					}
 				} else {
-					await buildWorkspacePackages(workspacePath, manifest, workspacePackages, argv, diagnosticReporter);
+					const manifest = createWorkspaceBuildManifest(workspacePath, workspacePackages);
+					writeWorkspaceBuildManifest(workspacePath, manifest);
+					if (argv.watch) {
+						await watchWorkspacePackages(
+							workspacePath,
+							manifest,
+							workspacePackages,
+							argv,
+							diagnosticReporter,
+						);
+					} else {
+						await buildWorkspacePackages(
+							workspacePath,
+							manifest,
+							workspacePackages,
+							argv,
+							diagnosticReporter,
+						);
+					}
 				}
 			} else {
 				const tsConfigPath = findTsConfigPath(projectPath);
