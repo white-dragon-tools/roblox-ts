@@ -108,11 +108,8 @@ function patchFlameworkBuildInfoCache(packageRoot: string, workspaceBuildArtifac
 }
 
 function seedFlameworkBuildInfoCandidates(modulePath: string, workspaceBuildArtifacts: Array<string>) {
-	if (workspaceBuildArtifacts.length === 0) return;
-
 	const packageRoot = findPackageRoot(modulePath);
 	if (!packageRoot) return;
-	patchFlameworkBuildInfoCache(packageRoot, workspaceBuildArtifacts);
 
 	// eslint-disable-next-line @typescript-eslint/no-require-imports -- seed Flamework's package-local cache
 	const { Cache } = require(path.join(packageRoot, "out/util/cache.js")) as {
@@ -125,6 +122,16 @@ function seedFlameworkBuildInfoCandidates(modulePath: string, workspaceBuildArti
 		};
 	};
 
+	if (workspaceBuildArtifacts.length === 0) {
+		if (Cache.buildInfoCandidates !== undefined) {
+			Cache.buildInfoCandidates = undefined;
+			Cache.shouldView?.clear();
+		}
+		return;
+	}
+
+	patchFlameworkBuildInfoCache(packageRoot, workspaceBuildArtifacts);
+
 	const candidates = new Array<string>();
 	for (const artifactPath of workspaceBuildArtifacts) {
 		if (path.basename(artifactPath) === "flamework.build" && fs.pathExistsSync(artifactPath)) {
@@ -132,18 +139,24 @@ function seedFlameworkBuildInfoCandidates(modulePath: string, workspaceBuildArti
 		}
 	}
 
-	if (candidates.length > 0) {
-		const nextCandidates = [...new Set(candidates.map(v => fs.realpathSync(v)))];
-		const currentCandidates = Cache.buildInfoCandidates;
-		const candidatesChanged =
-			currentCandidates === undefined ||
-			currentCandidates.length !== nextCandidates.length ||
-			currentCandidates.some((candidate, index) => candidate !== nextCandidates[index]);
-
-		if (candidatesChanged) {
-			Cache.buildInfoCandidates = nextCandidates;
+	if (candidates.length === 0) {
+		if (Cache.buildInfoCandidates !== undefined) {
+			Cache.buildInfoCandidates = undefined;
 			Cache.shouldView?.clear();
 		}
+		return;
+	}
+
+	const nextCandidates = [...new Set(candidates.map(v => fs.realpathSync(v)))];
+	const currentCandidates = Cache.buildInfoCandidates;
+	const candidatesChanged =
+		currentCandidates === undefined ||
+		currentCandidates.length !== nextCandidates.length ||
+		currentCandidates.some((candidate, index) => candidate !== nextCandidates[index]);
+
+	if (candidatesChanged) {
+		Cache.buildInfoCandidates = nextCandidates;
+		Cache.shouldView?.clear();
 	}
 }
 
@@ -180,6 +193,25 @@ function getTransformerFromFactory(factory: PluginFactory, config: TransformerPl
 		return { before: transformer };
 	}
 	return transformer;
+}
+
+function createProgramForFlameworkTransformer(program: ts.Program): ts.Program {
+	return new Proxy(program, {
+		get(target, property, receiver) {
+			if (property === "getCompilerOptions") {
+				return () => {
+					const { tsBuildInfoFile, ...options } = target.getCompilerOptions();
+					return {
+						...options,
+						incremental: false,
+					};
+				};
+			}
+
+			const value = Reflect.get(target, property, receiver);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
 }
 
 export function flattenIntoTransformers(
@@ -222,7 +254,11 @@ export function createTransformerList(
 
 			if (!factory || typeof factory !== "function") throw new Error("factory not a function");
 
-			const transformer = getTransformerFromFactory(factory, config, program);
+			const transformerProgram =
+				config.transform === "rbxts-transformer-flamework"
+					? createProgramForFlameworkTransformer(program)
+					: program;
+			const transformer = getTransformerFromFactory(factory, config, transformerProgram);
 			if (transformer) {
 				if (transformer.afterDeclarations) {
 					transforms.afterDeclarations?.push(transformer.afterDeclarations);
