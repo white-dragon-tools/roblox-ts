@@ -42,6 +42,14 @@ function emitResultFailure(messageText: string): ts.EmitResult {
 	};
 }
 
+// Cache RojoResolver instances across watch-mode incremental rebuilds.
+// Without this, every incremental rebuild calls RojoResolver.fromPath which
+// walks the out/ tree via realpathSync; under pnpm symlinks this can ENOENT
+// transiently when files were just rewritten. Caching avoids the re-walk
+// entirely (also a measurable perf win). Cache keyed by rojo config path /
+// typeRoot path; entries effectively persist for the watch process lifetime.
+const ROJO_RESOLVER_CACHE = new Map<string, RojoResolver>();
+
 /**
  * 'transpiles' TypeScript project into a logically identical Luau project.
  *
@@ -59,9 +67,18 @@ export function compileFiles(
 
 	const outDir = compilerOptions.outDir!;
 
-	const rojoResolver = data.rojoConfigPath
-		? RojoResolver.fromPath(data.rojoConfigPath)
-		: RojoResolver.synthetic(outDir);
+	let rojoResolver: RojoResolver;
+	if (data.rojoConfigPath) {
+		const cached = ROJO_RESOLVER_CACHE.get(data.rojoConfigPath);
+		if (cached) {
+			rojoResolver = cached;
+		} else {
+			rojoResolver = RojoResolver.fromPath(data.rojoConfigPath);
+			ROJO_RESOLVER_CACHE.set(data.rojoConfigPath, rojoResolver);
+		}
+	} else {
+		rojoResolver = RojoResolver.synthetic(outDir);
+	}
 
 	for (const warning of rojoResolver.getWarnings()) {
 		LogService.warn(warning);
@@ -76,7 +93,15 @@ export function compileFiles(
 		}
 	}
 
-	const pkgRojoResolvers = compilerOptions.typeRoots!.map(RojoResolver.synthetic);
+	const pkgRojoResolvers = compilerOptions.typeRoots!.map(typeRoot => {
+		const cached = ROJO_RESOLVER_CACHE.get(typeRoot);
+		if (cached) {
+			return cached;
+		}
+		const resolver = RojoResolver.synthetic(typeRoot);
+		ROJO_RESOLVER_CACHE.set(typeRoot, resolver);
+		return resolver;
+	});
 	const nodeModulesPathMapping = createNodeModulesPathMapping(compilerOptions.typeRoots!);
 
 	const projectType = data.projectOptions.type ?? inferProjectType(data, rojoResolver);
@@ -119,7 +144,12 @@ export function compileFiles(
 			);
 			const transformers = flattenIntoTransformers(transformerList);
 			if (transformers.length > 0) {
-				const { service, updateFile } = (data.transformerWatcher ??= createTransformerWatcher(program));
+				// Recreate transformerWatcher on every compileFiles call. The cached version
+				// snapshots program.getRootFileNames() at construction; when watch-mode adds
+				// new files (or new modules become reachable across rebuilds), the stale set
+				// causes TS module resolution to return entries with no backing AST node →
+				// "Cannot read properties of undefined (reading 'kind')" inside isImportDeclaration.
+				const { service, updateFile } = (data.transformerWatcher = createTransformerWatcher(program));
 				const transformResult = ts.transformNodes(
 					undefined,
 					undefined,
