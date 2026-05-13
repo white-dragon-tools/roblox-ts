@@ -2,6 +2,7 @@ import kleur from "kleur";
 
 export class LogService {
 	public static verbose = false;
+	public static showProgress = true;
 	private static partial = false;
 
 	static write(message: string) {

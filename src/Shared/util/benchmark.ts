@@ -23,6 +23,14 @@ export function benchmarkIfVerbose(name: string, callback: () => void) {
 	}
 }
 
+export function benchmarkIfProgress(name: string, callback: () => void) {
+	if (LogService.showProgress) {
+		benchmarkSync(name, callback);
+	} else {
+		callback();
+	}
+}
+
 export async function benchmark<T>(name: string, callback: () => Promise<T>) {
 	const startTime = benchmarkStart(name);
 	await callback();

@@ -16,7 +16,7 @@ import { LogService } from "Shared/classes/LogService";
 import { ProjectType } from "Shared/constants";
 import { ProjectData } from "Shared/types";
 import { assert } from "Shared/util/assert";
-import { benchmarkIfVerbose } from "Shared/util/benchmark";
+import { benchmarkIfProgress } from "Shared/util/benchmark";
 import { createTextDiagnostic } from "Shared/util/createTextDiagnostic";
 import { getRootDirs } from "Shared/util/getRootDirs";
 import { isPathDescendantOf } from "Shared/util/isPathDescendantOf";
@@ -134,7 +134,7 @@ export function compileFiles(
 	let proxyProgram = program;
 
 	if (compilerOptions.plugins && compilerOptions.plugins.length > 0) {
-		benchmarkIfVerbose(`running transformers..`, () => {
+		benchmarkIfProgress(`running transformers..`, () => {
 			const pluginConfigs = getPluginConfigs(data.tsConfigPath);
 			const transformerList = createTransformerList(
 				program,
@@ -189,7 +189,7 @@ export function compileFiles(
 		const sourceFile = proxyProgram.getSourceFile(sourceFiles[i].fileName);
 		assert(sourceFile);
 		const progress = `${i + 1}/${sourceFiles.length}`.padStart(progressMaxLength);
-		benchmarkIfVerbose(`${progress} compile ${path.relative(process.cwd(), sourceFile.fileName)}`, () => {
+		benchmarkIfProgress(`${progress} compile ${path.relative(process.cwd(), sourceFile.fileName)}`, () => {
 			DiagnosticService.addDiagnostics(ts.getPreEmitDiagnostics(proxyProgram, sourceFile));
 			DiagnosticService.addDiagnostics(getCustomPreEmitDiagnostics(data, sourceFile));
 			if (DiagnosticService.hasErrors()) return;
@@ -223,7 +223,7 @@ export function compileFiles(
 
 	const emittedFiles = new Array<string>();
 	if (fileWriteQueue.length > 0) {
-		benchmarkIfVerbose("writing compiled files", () => {
+		benchmarkIfProgress("writing compiled files", () => {
 			const afterDeclarations = compilerOptions.declaration
 				? [transformTypeReferenceDirectives, transformPathsTransformer(program, {})]
 				: undefined;

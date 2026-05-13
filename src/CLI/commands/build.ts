@@ -306,6 +306,11 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 				boolean: true,
 				describe: "enable verbose logs",
 			})
+			.option("quiet", {
+				alias: "q",
+				boolean: true,
+				describe: "suppress per-file progress (overrides --verbose for benchmarks)",
+			})
 			.option("noInclude", {
 				boolean: true,
 				describe: "do not copy include files",
@@ -354,6 +359,7 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 			const projectPath = path.resolve(argv.project);
 
 			LogService.verbose = argv.verbose === true;
+			LogService.showProgress = argv.quiet !== true;
 
 			const diagnosticReporter = ts.createDiagnosticReporter(ts.sys, true);
 
@@ -390,6 +396,7 @@ export = ts.identity<yargs.CommandModule<object, BuildFlags & Partial<ProjectOpt
 				const tsConfigPath = findTsConfigPath(projectPath);
 				const projectOptions = createProjectOptions(tsConfigPath, argv);
 				LogService.verbose = projectOptions.verbose === true;
+				LogService.showProgress = argv.quiet !== true;
 				const data = createProjectData(tsConfigPath, projectOptions);
 				if (projectOptions.watch) {
 					setupProjectWatchProgram(data, projectOptions.usePolling);
