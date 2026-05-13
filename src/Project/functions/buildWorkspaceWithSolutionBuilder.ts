@@ -231,12 +231,37 @@ function configureSolutionBuilderHost(
 			const rootDirs = getRootDirs(compilerOptions);
 			copyFiles(data, pathTranslator, new Set(rootDirs));
 
-			const hints = changedHintsByProgram.get(builderProgram);
-			const sourceFiles = (
-				hints !== undefined
-					? getChangedSourceFiles(builderProgram, hints)
-					: program.getSourceFiles().filter(sourceFile => !sourceFile.isDeclarationFile)
-			).filter(sourceFile => rootDirs.some(rootDir => isPathDescendantOf(sourceFile.fileName, rootDir)));
+			// TS BuilderState.seenAffectedFiles is the signature-aware affected set:
+			// emitNextAffectedFile adds each emitted file's resolvedPath. Trust this directly
+			// instead of getChangedFilePaths' blind reverse referencedMap walk, which fans a
+			// barrel touch out to every transitive importer even when its .d.ts signature is
+			// unchanged. Fallback to the legacy hints path if TS ever renames the field.
+			const state = builderProgram.getState() as {
+				seenAffectedFiles?: ReadonlySet<string>;
+			};
+			const affectedPaths = state.seenAffectedFiles;
+
+			let candidateSourceFiles: ReadonlyArray<ts.SourceFile>;
+			if (affectedPaths !== undefined) {
+				const collected = new Array<ts.SourceFile>();
+				for (const filePath of affectedPaths) {
+					const sf = program.getSourceFile(filePath);
+					if (sf !== undefined && !sf.isDeclarationFile && !ts.isJsonSourceFile(sf)) {
+						collected.push(sf);
+					}
+				}
+				candidateSourceFiles = collected;
+			} else {
+				const hints = changedHintsByProgram.get(builderProgram);
+				candidateSourceFiles =
+					hints !== undefined
+						? getChangedSourceFiles(builderProgram, hints)
+						: program.getSourceFiles().filter(sourceFile => !sourceFile.isDeclarationFile);
+			}
+
+			const sourceFiles = candidateSourceFiles.filter(sourceFile =>
+				rootDirs.some(rootDir => isPathDescendantOf(sourceFile.fileName, rootDir)),
+			);
 			const emitResult = compileFiles(program, data, pathTranslator, sourceFiles);
 
 			for (const diagnostic of emitResult.diagnostics) {
